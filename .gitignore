@@ -1,0 +1,11 @@
+# Never publish personal files, even if they are saved into this folder by mistake
+home-accounts-backup-*.json
+home-accounts-*.csv
+*.csv
+*.json
+!manifest.webmanifest
+
+# Editor / system files
+.vscode/
+desktop.ini
+Thumbs.db

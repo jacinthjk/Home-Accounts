@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <!-- Privacy: this page may only talk to the family's own Supabase cloud (used only for family
+       sharing, and only with encrypted entries). Every other address on the internet is blocked. -->
+  <meta http-equiv="Content-Security-Policy"
+        content="connect-src https://*.supabase.co https://*.supabase.in; form-action 'none'; object-src 'none'; base-uri 'none'; frame-src 'none'">
+  <meta name="referrer" content="no-referrer">
+  <meta name="description" content="Private home account book – daily expenses, income, savings and budget warnings. English and Tamil.">
+  <!-- Phone app look -->
+  <meta name="theme-color" content="#0f7a5c" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#141413" media="(prefers-color-scheme: dark)">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Home Accounts">
+  <meta name="format-detection" content="telephone=no">
+  <title>Home Accounts</title>
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <!-- Lock / setup screen (shown until the correct password is entered) -->
+  <div id="lock" class="lock"></div>
+
+  <!-- Main app (only rendered after unlocking) -->
+  <div id="app" class="hidden">
+    <header class="topbar">
+      <div class="title" id="topTitle">Home Accounts</div>
+      <button class="icon-btn hidden" id="btnSync" title="Family sharing"></button>
+      <button class="icon-btn" id="btnLang" title="Language"></button>
+      <button class="icon-btn" id="btnPrivacy" title="Hide or show amounts" aria-pressed="false">👁️<span class="lbl">Hide</span></button>
+      <button class="icon-btn" id="btnLock" title="Lock the app now">🔒<span class="lbl" data-i18n="Lock">Lock</span></button>
+    </header>
+    <main id="view" tabindex="-1"></main>
+    <nav class="bottom-nav" aria-label="Main menu">
+      <div class="nav-brand" aria-hidden="true">📒 <span data-i18n="Home Accounts">Home Accounts</span></div>
+      <button data-nav="home"><span class="ico">🏠</span><span class="nav-lbl" data-i18n="Home">Home</span><span class="badge hidden" id="alertBadge"></span></button>
+      <button data-nav="ledger"><span class="ico">📒</span><span class="nav-lbl" data-i18n="Daily Ledger">Daily Ledger</span></button>
+      <button data-nav="income"><span class="ico">💰</span><span class="nav-lbl" data-i18n="Income">Income</span></button>
+      <button data-nav="reports"><span class="ico">📊</span><span class="nav-lbl" data-i18n="Reports">Reports</span></button>
+      <button data-nav="settings"><span class="ico">⚙️</span><span class="nav-lbl" data-i18n="Settings">Settings</span></button>
+    </nav>
+  </div>
+
+  <div id="modalHost"></div>
+  <div class="toast-host" id="toastHost" aria-live="polite"></div>
+  <div class="tooltip hidden" id="tooltip" role="status"></div>
+
+  <script src="i18n.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
