@@ -2,6 +2,9 @@
 
 Works on **computers and mobile phones**, in **English and தமிழ்**.
 
+📱 **Open the app:** <https://jacinthjk.github.io/Home-Accounts/>
+(Open it on a phone and choose "Add to Home screen" to install it.)
+
 ## How to open it on a computer
 Double-click **index.html**. It opens in your web browser (Microsoft Edge or Google Chrome).
 No internet, no sign-up and no installation are needed.
