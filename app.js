@@ -856,6 +856,8 @@ function lockUnlock(msg = '') {
   L.innerHTML = frame(`
     <p class="sub">${esc(t('Welcome back! Enter your password to open your accounts.'))}</p>
     ${phone ? `<p class="sub" style="margin-top:-12px">👤 ${esc(maskPhone(phone))}</p>` : ''}
+    ${!phone && cloudReady() ? `<div class="alert info"><span class="ico">📱</span><div><b>${esc(t('Home Accounts now uses your mobile number'))}</b>
+      <span class="small">${esc(t('This device has accounts saved from before. Open them with your password, and next you will add your mobile number – everything is kept and moved into your new account.'))}</span></div></div>` : ''}
     ${msg ? `<div class="alert info"><span class="ico">ℹ️</span><div>${esc(msg)}</div></div>` : ''}
     <form id="f">
       <label class="field"><span>${esc(t('Password'))}</span><input class="input" type="password" name="pw" autocomplete="current-password" autofocus></label>
@@ -866,6 +868,7 @@ function lockUnlock(msg = '') {
     <div class="links">
       <button class="link-btn" id="lnkForgot">${esc(t('Forgot password? Use recovery code'))}</button>
       ${phone && cloudReady() ? `<button class="link-btn" id="lnkOther">${esc(t('Log in with a different account'))}</button>` : ''}
+      ${!phone && cloudReady() ? `<button class="link-btn" id="lnkPhone">📱 ${esc(t('I already have an account – log in with my mobile number'))}</button>` : ''}
       <button class="link-btn" id="lnkRestore">${esc(t('Restore from a backup file'))}</button>
     </div>`);
   const f = $('#f'); pwToggle(f);
@@ -873,6 +876,11 @@ function lockUnlock(msg = '') {
   $('#lnkForgot').onclick = () => lockRecover(phone || '');
   $('#lnkOther')?.addEventListener('click', async () => {
     if (await confirmBox(t('This removes the accounts of {p} from this device (they stay safe in the cloud if they were synced). Continue?', { p: maskPhone(phone) }), t('Yes, continue'), true)) {
+      localStorage.removeItem(VAULT_KEY); resetAttempts(); lockLogin();
+    }
+  });
+  $('#lnkPhone')?.addEventListener('click', async () => {
+    if (await confirmBox(t('The accounts saved on this device from before will be removed from this device. If you want to keep them, open them with your password instead – they are then moved into your account. Remove them and log in with a mobile number?'), t('Remove and log in'), true)) {
       localStorage.removeItem(VAULT_KEY); resetAttempts(); lockLogin();
     }
   });
@@ -1101,7 +1109,10 @@ if (isWeb) {
         reg.addEventListener('updatefound', () => {
           const w = reg.installing;
           w?.addEventListener('statechange', () => {
-            if (w.state === 'activated' && navigator.serviceWorker.controller) toast(t('✨ App updated'), t('Close and reopen the app to use the new version.'));
+            if (w.state !== 'activated' || !navigator.serviceWorker.controller) return;
+            // A newer version is ready. Nothing is open yet on the login screen, so switch to it straight away.
+            if (!S.dataKey) location.reload();
+            else toast(t('✨ App updated'), t('Close and reopen the app to use the new version.'));
           });
         });
       }).catch(() => { /* offline use simply won't be available */ });

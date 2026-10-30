@@ -701,6 +701,12 @@ window.HA_I18N = {
     "You now have your own account book again.": "இப்போது மீண்டும் உங்களுக்குச் சொந்தக் கணக்கு உள்ளது.",
     "Sign out of this device? Your accounts stay safe in your account – log in again with your mobile number and password.": "இந்தக் கருவியிலிருந்து வெளியேறவா? உங்கள் கணக்கில் எல்லாம் பாதுகாப்பாக இருக்கும் – மொபைல் எண்ணும் கடவுச்சொல்லும் கொண்டு மீண்டும் உள்நுழையலாம்.",
 
+    "Home Accounts now uses your mobile number": "Home Accounts இப்போது உங்கள் மொபைல் எண்ணைப் பயன்படுத்துகிறது",
+    "This device has accounts saved from before. Open them with your password, and next you will add your mobile number – everything is kept and moved into your new account.": "இந்தக் கருவியில் முன்பு சேமித்த கணக்குகள் உள்ளன. உங்கள் கடவுச்சொல்லால் திறந்ததும், அடுத்து உங்கள் மொபைல் எண்ணைச் சேர்ப்பீர்கள் – அனைத்தும் வைக்கப்பட்டு உங்கள் புதிய கணக்கில் சேர்க்கப்படும்.",
+    "I already have an account – log in with my mobile number": "எனக்கு ஏற்கனவே கணக்கு உள்ளது – மொபைல் எண்ணுடன் உள்நுழை",
+    "The accounts saved on this device from before will be removed from this device. If you want to keep them, open them with your password instead – they are then moved into your account. Remove them and log in with a mobile number?": "இந்தக் கருவியில் முன்பு சேமித்த கணக்குகள் இந்தக் கருவியிலிருந்து நீக்கப்படும். அவை வேண்டுமெனில், பதிலாக உங்கள் கடவுச்சொல்லால் திறங்கள் – அவை உங்கள் கணக்கில் சேர்க்கப்படும். நீக்கிவிட்டு மொபைல் எண்ணுடன் உள்நுழையவா?",
+    "Remove and log in": "நீக்கிவிட்டு உள்நுழை",
+
     // ---- Your own devices
     "Family sharing & your devices": "குடும்பப் பகிர்வு & உங்கள் கருவிகள்",
     "The same way, you can use your accounts on several of your own devices (phone, tablet, computer) and keep them all up to date.": "இதே வழியில், உங்கள் கணக்கை உங்கள் பல கருவிகளிலும் (மொபைல், டேப்லெட், கணினி) பயன்படுத்தி எல்லாவற்றையும் ஒரே மாதிரி வைத்திருக்கலாம்.",
