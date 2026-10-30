@@ -3,6 +3,8 @@
 --
 -- HOW TO USE: Supabase dashboard → your project → SQL Editor → New query
 --             → paste this whole file → Run.  (Safe to run again.)
+-- VERSION 2 (Oct 2026): adds linking your own other devices and month plans.
+--             If you ran an older version, simply run this file again.
 --
 -- PRIVACY: every entry is encrypted on the phone before it is sent.
 -- This database only ever stores scrambled text ("blob") that it cannot read.
@@ -34,12 +36,15 @@ create table if not exists public.ha_members (
 create table if not exists public.ha_invites (
   code       text primary key,
   book_id    uuid not null references public.ha_books(id) on delete cascade,
-  role       text not null check (role in ('editor', 'member')),
+  role       text not null,
   created_by uuid not null,
   expires_at timestamptz not null,
   used_by    uuid,
   used_at    timestamptz
 );
+-- (updated in version 2: 'owner' invites link the owner's own other devices)
+alter table public.ha_invites drop constraint if exists ha_invites_role_check;
+alter table public.ha_invites add constraint ha_invites_role_check check (role in ('owner', 'editor', 'member'));
 
 create sequence if not exists public.ha_seq;
 
@@ -94,7 +99,8 @@ begin
   if public.ha_role(p_book) is distinct from 'owner' then
     raise exception 'only the owner can invite' using errcode = '42501';
   end if;
-  if p_role not in ('editor', 'member') then raise exception 'bad role' using errcode = 'P0001'; end if;
+  -- 'owner' invites are for the owner's own other phones / computers
+  if p_role not in ('owner', 'editor', 'member') then raise exception 'bad role' using errcode = 'P0001'; end if;
   delete from public.ha_invites where book_id = p_book and (expires_at < now() or used_by is not null);
   if (select count(*) from public.ha_invites where book_id = p_book) >= 20 then
     raise exception 'too many open invites' using errcode = 'P0001';
@@ -137,34 +143,40 @@ begin
                where m.book_id = p_book order by m.joined_at;
 end $$;
 
--- Owner changes someone's permission or removes them
+-- Owner changes someone's permission, or removes a person or one of the owner's other devices
 create or replace function public.ha_set_member(p_book uuid, p_user uuid, p_role text, p_status text) returns void
 language plpgsql security definer set search_path = public as $$
 begin
   if public.ha_role(p_book) is distinct from 'owner' then
     raise exception 'only the owner can change members' using errcode = '42501';
   end if;
-  if p_user = auth.uid() then raise exception 'cannot change the owner' using errcode = 'P0001'; end if;
-  if p_role not in ('editor', 'member') or p_status not in ('active', 'removed') then
+  if p_user = auth.uid() then raise exception 'cannot change your own device' using errcode = 'P0001'; end if;
+  if p_user = (select b.owner from public.ha_books b where b.id = p_book) then
+    raise exception 'cannot change the device that started the family book' using errcode = 'P0001';
+  end if;
+  if p_role not in ('owner', 'editor', 'member') or p_status not in ('active', 'removed') then
     raise exception 'bad value' using errcode = 'P0001';
   end if;
   update public.ha_members set role = p_role, status = p_status
-  where book_id = p_book and user_id = p_user and role <> 'owner';
+  where book_id = p_book and user_id = p_user;
 end $$;
 
--- A member leaves the family book
+-- A member (or one of the owner's other devices) leaves the family book.
+-- The device that started the book cannot leave; it can only delete the book.
 create or replace function public.ha_leave(p_book uuid) returns void
 language plpgsql security definer set search_path = public as $$
 begin
   update public.ha_members set status = 'removed'
-  where book_id = p_book and user_id = auth.uid() and role <> 'owner';
+  where book_id = p_book and user_id = auth.uid()
+    and user_id <> (select b.owner from public.ha_books b where b.id = p_book);
 end $$;
 
--- Owner deletes the whole family book from the cloud
+-- The device that started the family book deletes it from the cloud
 create or replace function public.ha_delete_book(p_book uuid) returns void
 language plpgsql security definer set search_path = public as $$
 begin
-  if public.ha_role(p_book) is distinct from 'owner' then
+  if public.ha_role(p_book) is distinct from 'owner'
+     or auth.uid() is distinct from (select b.owner from public.ha_books b where b.id = p_book) then
     raise exception 'only the owner can delete the family book' using errcode = '42501';
   end if;
   delete from public.ha_books where id = p_book;
@@ -222,8 +234,8 @@ begin
         bad := bad || to_jsonb(rid);
       end if;
     else
-      -- shared settings may only be created by the owner or an editor
-      if rid like 'S|%' and my_role not in ('owner', 'editor') then bad := bad || to_jsonb(rid); continue; end if;
+      -- shared settings and month plans may only be created by the owner or an editor
+      if (rid like 'S|%' or rid like 'P|%') and my_role not in ('owner', 'editor') then bad := bad || to_jsonb(rid); continue; end if;
       -- expenses and notes carry their author's id at the end: nobody can create one in someone else's name
       if (rid like 'L|%' or rid like 'N|%') and rid not like ('%|' || uid::text) then bad := bad || to_jsonb(rid); continue; end if;
       insert into public.ha_entries (book_id, id, author, updated_by, deleted, blob)

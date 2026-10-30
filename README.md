@@ -53,12 +53,21 @@ Each entry shows who added it ("👤 Added by Priya"). **Reports → Spending by
 2. Tap **Send** (or **Copy**) and send it **privately** to that one person, for example in WhatsApp. An invite works **once** and expires in **48 hours**.
 3. They open the link on their phone, or go to **Settings → Family sharing → Join a family** and paste it. Their existing entries are added to the family book.
 
+### Using your accounts on several of your own devices 📱💻
+Want the same accounts on your phone **and** your computer (or a tablet)? Once the family cloud is set up (above):
+1. On the device you already use: **Settings → Family sharing → Link my other device → Create invite**. Send it to yourself, for example by email, or copy it.
+2. On the other device: open the app at its web address, create a password for that device, then open the link, or go to **Settings → Family sharing → Join a family / link this device** and paste it.
+
+That device now shows exactly the same accounts and **stays in sync both ways**, with full owner rights. Entries made on one device show on the other as "Added by your other device". If a device is lost or sold, tap ✎ next to it in the family list and choose **Unlink this device**. It is cut off at once.
+
+> **Already ran the cloud set-up before October 30, 2026?** Run **family-sharing-setup.sql** in the Supabase SQL Editor once more. It is safe to repeat, and it adds device linking and month plans.
+
 ### Good to know
 - Phones keep working **without internet**. Changes are sent automatically when the connection returns. The ☁️ button at the top shows the sync status; tap it to sync now.
 - The owner can change someone's permission or **remove** them (✎ next to their name). Removed people stop seeing new entries. What they already added stays.
 - A member who taps **Leave the family book** keeps only their own entries on their phone.
 - The free Supabase plan **pauses** a project after about a week with no use. If syncing stops, open your Supabase dashboard and click **Restore project**. Nothing is lost.
-- Keep making **backups**: the backup also keeps your connection to the family book. Restore it only on a phone that replaces an old one. To use a second phone at the same time, send it its own invite instead.
+- Keep making **backups**: the backup also keeps your connection to the family book. Restore it only on a phone that replaces an old one. To use a second device at the same time, use **Link my other device** instead.
 
 ## Language / மொழி 🌐
 Tap **English / தமிழ்** on the login screen, the **அ / A** button at the top, or **Settings → Language**.
@@ -85,6 +94,16 @@ Tap **English / தமிழ்** on the login screen, the **அ / A** button at
 - **Bought today** shows only what you bought that day.
 - **Other expense** is for one-time costs, such as a plumber.
 - **Copy items from an earlier day** repeats a regular shopping list.
+
+## Planner 📅 (yearly planner & monthly pre-planner)
+Tap **📅 Planner** in the menu.
+- **The year:** all 12 months are shown at once. Each month shows what you **planned** and what you **spent**, with a coloured bar, and any payments still to make or overdue. This month is highlighted. Use ◀ ▶ to change the year.
+- **Tap a month** to plan it in advance:
+  - **Planned payments & purchases:** things to pay or buy that month, such as school fees, rent, a gas cylinder or festival shopping, with an optional due date. **Tick** one when it is paid and it is added to the daily ledger automatically. Untick it to take it back out.
+  - **Plan for each type of expense:** how much you want to spend on Groceries, Bills and so on. Planned payments count towards their type.
+  - **Expected income** and **notes for the month** (for example "Diwali on the 8th").
+  - **Copy last month's plan** or **Use my usual budgets** to fill it in quickly.
+- The app reminds you on **Home** when a planned payment is due in the next 3 days or is overdue, and warns you when you spend more than planned.
 
 ## Speak your expenses 🎤
 Tap **🎤 Speak your expenses** on the Daily Ledger, or **🎤 Speak** on Home, then just talk. For example:

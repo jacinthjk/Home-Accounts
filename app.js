@@ -281,6 +281,7 @@ function defaultData(name, curCode) {
     items: DEFAULT_ITEMS.map(([n, price, cat, icon, unit]) => ({ id: uid(), name: n, price: inr ? price : 0, cat, icon, unit, qUnit: unit })),
     ledger: {},
     income: [],
+    plans: {},
   };
 }
 function migrate(d) {
@@ -288,6 +289,7 @@ function migrate(d) {
   d.categories ||= DEFAULT_CATS.map(([id, n, icon]) => ({ id, name: n, icon, budget: 0 }));
   if (!d.categories.some(c => c.id === 'other')) d.categories.push({ id: 'other', name: 'Others', icon: '📦', budget: 0 });
   d.items ||= []; d.ledger ||= {}; d.income ||= [];
+  d.plans ||= {}; // month plans: { 'YYYY-MM': { income, cats: {catId: amount}, note, items: {id: planned payment} } }
   // v1 -> v2: add units. The amount of every saved entry stays exactly the same.
   const addUnit = x => {
     if (!x.unit) {
@@ -394,6 +396,29 @@ function computeAlerts() {
     over.sort((a, b) => b.extra - a.extra).slice(0, 3).forEach(o => out.push({
       id: `item-${o.k}-${mk}`, lvl: 'warning', ico: o.it.icon || '🛍️', t: t('More spent on {i}', { i: nm(o.it.name) }),
       m: t('{a} this month, but usually about {b} a month ({c} more).', { a: money(o.it.amt), b: money(o.avg), c: money(o.extra) }) }));
+  }
+
+  // This month's plan: payments due soon / overdue, and spending above the plan
+  const plan = S.data.plans?.[mk];
+  if (plan) {
+    for (const [pid, it] of Object.entries(plan.items || {})) {
+      if (it.done || !it.day) continue;
+      const due = `${mk}-${pad(Math.min(it.day, dim))}`, diff = Math.round((pkey(due) - pkey(tk)) / 864e5);
+      if (diff < 0) out.push({ id: `plan-late-${mk}-${pid}`, lvl: 'warning', ico: '⏰', t: t('Planned payment overdue: {i}', { i: it.name }),
+        m: t('{a} was due on {d}. Tick it in the Planner when it is paid.', { a: money(it.amount), d: fmtShort(due) }), act: 'planner', mk });
+      else if (diff <= 3) out.push({ id: `plan-due-${mk}-${pid}`, lvl: 'info', ico: '📌', t: diff === 0 ? t('{i} is due today', { i: it.name }) : diff === 1 ? t('{i} is due tomorrow', { i: it.name }) : t('{i} is due in {n} days', { i: it.name, n: diff }),
+        m: t('{a} – due on {d}.', { a: money(it.amount), d: fmtShort(due) }), act: 'planner', mk });
+    }
+    const pt = plannedTotal(mk);
+    if (pt > 0 && st.expense > pt) out.push({ id: `plan-over-${mk}`, lvl: 'warning', ico: '📅', t: t("Spending is more than this month's plan"),
+      m: t('Planned {a}, spent {b} ({c} more).', { a: money(pt), b: money(st.expense), c: money(st.expense - pt) }), act: 'planner', mk });
+    for (const c of S.data.categories) {
+      const p = planForCat(mk, c.id);
+      if (!(p > 0) || c.budget > 0) continue; // a standing budget already warns for this type
+      const s = st.byCat[c.id] || 0;
+      if (s > p) out.push({ id: `plan-cat-${c.id}-${mk}`, lvl: 'warning', ico: c.icon, t: t('{c}: more than planned', { c: nm(c.name) }),
+        m: t('Planned {a}, spent {b}.', { a: money(p), b: money(s) }), act: 'planner', mk });
+    }
   }
 
   // Nothing wrong? Say something nice.
@@ -709,12 +734,12 @@ async function enterWithRaw(raw, v) {
 /* ---------------------------------------------------------------------
    App shell
    --------------------------------------------------------------------- */
-const TITLES = { home: 'Home Accounts', ledger: 'Daily Ledger', income: 'Income', reports: 'Reports', settings: 'Settings' };
+const TITLES = { home: 'Home Accounts', ledger: 'Daily Ledger', planner: 'Planner', income: 'Income', reports: 'Reports', settings: 'Settings' };
 function startApp() {
   L.classList.add('hidden'); L.innerHTML = '';
   $('#app').classList.remove('hidden');
   const tk = todayKey();
-  S.ui = { view: 'home', date: tk, filter: 'all', q: '', month: mkey(tk) };
+  S.ui = { view: 'home', date: tk, filter: 'all', q: '', month: mkey(tk), year: pkey(tk).getFullYear(), planMonth: null };
   paintShell();
   const alerts = computeAlerts();
   S.shown = new Set(alerts.map(a => a.id)); // already listed on Home – don't pop them again
@@ -746,7 +771,7 @@ function render() {
   AFTER[S.ui.view]?.(v);
 }
 
-$$('.bottom-nav [data-nav]').forEach(b => { b.onclick = () => go(b.dataset.nav); });
+$$('.bottom-nav [data-nav]').forEach(b => { b.onclick = () => { if (b.dataset.nav === 'planner') S.ui.planMonth = null; go(b.dataset.nav); }; });
 $('#btnLock').onclick = () => lockApp(t('Your accounts are locked.'));
 $('#btnPrivacy').onclick = () => { writePrefs({ privacy: !readPrefs().privacy }); applyPrefs(); };
 $('#btnLang').onclick = () => setLang(LANG === 'ta' ? 'en' : 'ta');
@@ -826,7 +851,8 @@ const monthBar = (mk, act) => `
   </div>`;
 const alertHtml = a => `<div class="alert ${a.lvl}"><span class="ico" aria-hidden="true">${esc(a.ico)}</span>
   <div style="flex:1"><b>${esc(a.t)}</b><span class="small">${esc(a.m)}</span>
-  ${a.act === 'backup' ? `<div><button class="btn sm" data-act="backup" style="margin-top:8px">💾 ${esc(t('Make a backup now'))}</button></div>` : ''}</div></div>`;
+  ${a.act === 'backup' ? `<div><button class="btn sm" data-act="backup" style="margin-top:8px">💾 ${esc(t('Make a backup now'))}</button></div>` : ''}
+  ${a.act === 'planner' ? `<div><button class="btn sm" data-act="openPlan" data-m="${esc(a.mk)}" style="margin-top:8px">📅 ${esc(t('Open the planner'))}</button></div>` : ''}</div></div>`;
 function progressHtml(spent, budget) {
   const p = budget > 0 ? spent / budget : 0;
   return `<div class="progress ${p >= 1 ? 'over' : p >= 0.8 ? 'warn' : ''}" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(Math.min(p, 1) * 100)}">
@@ -879,6 +905,8 @@ function viewHome() {
       : `<p class="muted" style="margin:0 0 10px">${esc(t('Set a monthly spending limit and the app will warn you before you cross it.'))}</p>
       <button class="btn" data-act="nav" data-to="settings">${esc(t('Set my budget'))}</button>`}
   </div>
+
+  ${homePlanCard(mk, st)}
 
   <div class="card">
     <h3>🔔 ${esc(t('Warnings & tips'))}</h3>
@@ -2160,6 +2188,254 @@ function voiceModal() {
 }
 
 /* ---------------------------------------------------------------------
+   PLANNER – a year of months, and a pre-plan for each month:
+   a planned amount for each type of expense, planned payments with due
+   dates (school fees, rent, festivals…), expected income and notes.
+   Planned payments count towards their type's plan.
+   --------------------------------------------------------------------- */
+function planOf(mk, create) {
+  const p = S.data.plans[mk];
+  if (p || !create) return p;
+  return (S.data.plans[mk] = { income: 0, cats: {}, note: '', items: {} });
+}
+const planItems = mk => Object.entries(planOf(mk)?.items || {}).map(([id, it]) => ({ id, ...it }));
+const itemsSum = (mk, catId) => planItems(mk).filter(i => catInfo(i.cat).id === catId).reduce((s, i) => s + (+i.amount || 0), 0);
+/** Planned amount for a type of expense = what was typed, or more if its planned payments add up to more. */
+const planForCat = (mk, catId) => Math.max(+planOf(mk)?.cats?.[catId] || 0, itemsSum(mk, catId));
+const plannedTotal = mk => (planOf(mk) ? round2(S.data.categories.reduce((s, c) => s + planForCat(mk, c.id), 0)) : 0);
+function cleanupPlan(mk) {
+  const p = S.data.plans[mk];
+  if (p && !(p.income > 0) && !p.note && !Object.values(p.cats || {}).some(v => v > 0) && !Object.keys(p.items || {}).length) delete S.data.plans[mk];
+}
+const dueKey = (mk, it) => (it.day ? `${mk}-${pad(Math.min(it.day, daysInMonth(mk)))}` : null);
+function dueTag(mk, it) {
+  if (it.done) return `<span class="due paid">✓ ${esc(t('Paid'))}</span>`;
+  const dk = dueKey(mk, it); if (!dk) return '';
+  const diff = Math.round((pkey(dk) - pkey(todayKey())) / 864e5);
+  if (diff < 0) return `<span class="due late">⏰ ${esc(t('Overdue – was due {d}', { d: fmtShort(dk) }))}</span>`;
+  if (diff <= 3) return `<span class="due soon">📌 ${esc(diff === 0 ? t('Due today') : diff === 1 ? t('Due tomorrow') : t('Due in {n} days', { n: diff }))}</span>`;
+  return `<span class="due">${esc(t('Due {d}', { d: fmtShort(dk) }))}</span>`;
+}
+
+function homePlanCard(mk, st) {
+  const pt = plannedTotal(mk);
+  if (!pt && !planItems(mk).length) return `<div class="card"><h3>📅 ${esc(t("This month's plan"))}</h3>
+    <p class="muted" style="margin:0 0 10px">${esc(t('Plan your month: school fees, rent, festivals and a spending amount for each type of expense.'))}</p>
+    <button class="btn" data-act="openPlan" data-m="${mk}">📅 ${esc(t('Plan this month'))}</button></div>`;
+  const next = planItems(mk).filter(i => !i.done).sort((a, b) => (a.day || 99) - (b.day || 99))[0];
+  return `<div class="card"><h3>📅 ${esc(t("This month's plan"))}</h3>
+    <div class="row wrap" style="margin-bottom:8px"><span>${th('Spent {a} of planned {b}', { a: M(st.expense), b: M(pt) })}</span></div>
+    ${progressHtml(st.expense, pt)}
+    ${next ? `<p class="small" style="margin:10px 0 0">${th('Next payment: **{i}** – {a}', { i: esc(next.name), a: M(next.amount) })} ${dueTag(mk, next)}</p>` : ''}
+    <button class="btn sm" data-act="openPlan" data-m="${mk}" style="margin-top:10px">📅 ${esc(t('Open the planner'))}</button></div>`;
+}
+
+function viewPlanner() { return S.ui.planMonth ? viewPlanMonth(S.ui.planMonth) : viewPlanYear(S.ui.year); }
+
+function viewPlanYear(y) {
+  const tk = todayKey(), nowMk = mkey(tk);
+  let yPlan = 0, ySpent = 0, yInc = 0;
+  const cards = [];
+  for (let m = 1; m <= 12; m++) {
+    const mk = `${y}-${pad(m)}`, st = monthStats(mk), pt = plannedTotal(mk), items = planItems(mk);
+    yPlan += pt; ySpent += st.expense; yInc += st.income;
+    const open = items.filter(i => !i.done), late = open.filter(i => i.day && dueKey(mk, i) < tk).length;
+    const over = pt > 0 && st.expense > pt;
+    cards.push(`<button class="month-card ${mk === nowMk ? 'now' : mk < nowMk ? 'past' : ''}" data-act="openPlan" data-m="${mk}" aria-label="${esc(fmtMonth(mk))}">
+      <div class="mc-name"><span>${esc(pkey(mk + '-01').toLocaleDateString(DLOC(), { month: 'long' }))}</span>${mk === nowMk ? `<span class="small" style="color:var(--accent)">● ${esc(t('Now'))}</span>` : ''}</div>
+      <div class="mc-row"><span>${esc(t('Planned'))}</span><b>${pt ? M(pt) : '—'}</b></div>
+      <div class="mc-row"><span>${esc(t('Spent'))}</span><b>${st.expense ? M(st.expense) : '—'}</b></div>
+      ${pt ? progressHtml(st.expense, pt) : ''}
+      <div class="mc-tag ${late || over ? 'warn' : ''}">${late ? '⏰ ' + esc(plural(late, '{n} payment overdue', '{n} payments overdue'))
+        : over ? '⚠️ ' + esc(t('Over the plan'))
+        : items.length ? '📝 ' + esc(plural(open.length, '{n} payment to make', '{n} payments to make')) : pt ? '' : esc(t('Not planned yet'))}</div>
+    </button>`);
+  }
+  return `
+  <div class="date-bar">
+    <button class="nav-arrow" data-act="planYear" data-d="-1" aria-label="${esc(t('Previous year'))}">◀</button>
+    <div class="date-main"><div class="d1">${y}</div><div class="small muted">${esc(t('Yearly planner'))}</div></div>
+    <button class="nav-arrow" data-act="planYear" data-d="1" aria-label="${esc(t('Next year'))}">▶</button>
+  </div>
+  <div class="grid-2 stats" style="margin-bottom:14px">
+    <div class="stat"><div class="k">📅 ${esc(t('Planned for the year'))}</div><div class="v">${M(yPlan)}</div></div>
+    <div class="stat"><div class="k">🧾 ${esc(t('Spent'))}</div><div class="v">${M(ySpent)}</div></div>
+    <div class="stat"><div class="k">💰 ${esc(t('Income'))}</div><div class="v">${M(yInc)}</div></div>
+    <div class="stat"><div class="k">🏦 ${esc(t('Saved'))}</div><div class="v ${yInc - ySpent >= 0 ? 'good' : 'bad'}">${M(yInc - ySpent)}</div></div>
+  </div>
+  <h3>${esc(t('Tap a month to plan it'))}</h3>
+  <div class="month-grid">${cards.join('')}</div>`;
+}
+
+function viewPlanMonth(mk) {
+  const p = planOf(mk) || { income: 0, cats: {}, note: '', items: {} }, st = monthStats(mk);
+  const pt = plannedTotal(mk), tk = todayKey(), dim = daysInMonth(mk);
+  const left = mk === mkey(tk) ? dim - pkey(tk).getDate() + 1 : mk > mkey(tk) ? dim : 0;
+  const items = planItems(mk).sort((a, b) => (a.done - b.done) || ((a.day || 99) - (b.day || 99)));
+  const manage = canManage(), dis = manage ? '' : 'disabled';
+  const expInc = +p.income || 0;
+  return `
+  <button class="btn sm" data-act="planBack" style="margin-bottom:10px">← ${esc(t('All months of {y}', { y: mk.slice(0, 4) }))}</button>
+  ${monthBar(mk, 'planMonthNav')}
+  <div class="grid-2 stats" style="margin-bottom:14px">
+    <div class="stat"><div class="k">📅 ${esc(t('Planned spending'))}</div><div class="v">${M(pt)}</div></div>
+    <div class="stat"><div class="k">🧾 ${esc(t('Spent so far'))}</div><div class="v ${pt && st.expense > pt ? 'bad' : ''}">${M(st.expense)}</div></div>
+    <div class="stat"><div class="k">💰 ${esc(t('Expected income'))}</div><div class="v">${M(expInc)}</div></div>
+    <div class="stat"><div class="k">🏦 ${esc(t('Expected savings'))}</div><div class="v ${expInc - pt >= 0 ? 'good' : 'bad'}">${expInc ? M(expInc - pt) : '—'}</div></div>
+  </div>
+  ${pt ? `<div class="card">${progressHtml(st.expense, pt)}
+    <p class="small" style="margin:8px 0 0">${st.expense <= pt
+      ? th('**{a}** left of the plan.', { a: M(pt - st.expense) }) + (left > 0 ? ' ' + th('About **{d}** per day for the remaining {n} days.', { d: M((pt - st.expense) / left), n: left }) : '')
+      : `<span style="color:var(--danger)">${th('**{a}** more than planned.', { a: M(st.expense - pt) })}</span>`}</p></div>` : ''}
+
+  <div class="cards-2">
+  <div class="card"><h3>📝 ${esc(t('Planned payments & purchases'))}</h3>
+    <p class="small muted" style="margin-top:0">${esc(t('Things to pay or buy this month, like school fees, rent, a gas cylinder or festival shopping. Tick them when paid – they are added to the daily ledger.'))}</p>
+    ${items.length ? items.map(it => `<div class="plan-item ${it.done ? 'done' : ''}">
+        <input type="checkbox" data-plantick="${esc(it.id)}" ${it.done ? 'checked' : ''} ${canEditBy(it.by) ? '' : 'disabled'} aria-label="${esc(t('Paid: {i}', { i: it.name }))}">
+        <button class="main" data-act="planItem" data-id="${esc(it.id)}">
+          <div class="t">${esc(catInfo(it.cat).icon)} ${esc(it.name)}</div>
+          <div>${dueTag(mk, it)}${shared() && it.by && it.by !== myId() ? ` <span class="small muted">· 👤 ${esc(memberName(it.by))}</span>` : ''}</div>
+        </button>
+        <div class="amt">${M(it.amount)}</div></div>`).join('')
+      : `<div class="empty">${esc(t('No payments planned yet.'))}</div>`}
+    <button class="btn primary block" data-act="planAdd" style="margin-top:10px">➕ ${esc(t('Add a planned payment'))}</button>
+  </div>
+
+  <div class="card"><h3>🎯 ${esc(t('Plan for each type of expense'))}</h3>
+    ${manage ? '' : `<p class="small muted">🔒 ${esc(t('Only the owner or an editor can change the month plan.'))}</p>`}
+    ${S.data.categories.map(c => { const typed = +p.cats?.[c.id] || 0, inItems = itemsSum(mk, c.id), plan = planForCat(mk, c.id), spent = st.byCat[c.id] || 0; return `
+      <div class="plan-cat"><span class="emo" aria-hidden="true" style="font-size:1.4rem">${esc(c.icon)}</span>
+        <div style="min-width:0"><div class="t" style="font-weight:600">${esc(nm(c.name))}</div>
+          <div class="small muted">${spent || plan ? th('Spent {a}', { a: M(spent) }) : ''}${inItems > typed ? ' · ' + th('includes {a} planned payments', { a: M(inItems) }) : ''}</div>
+          ${plan ? progressHtml(spent, plan) : ''}</div>
+        <input class="input" inputmode="decimal" data-plancat="${esc(c.id)}" value="${typed || ''}" placeholder="${inItems ? esc(String(inItems)) : '0'}" aria-label="${esc(t('Plan for {c}', { c: nm(c.name) }))}" ${dis}>
+      </div>`; }).join('')}
+    <div class="grid-2" style="margin-top:12px">
+      <button class="btn" data-act="planCopy" ${dis}>📋 ${esc(t("Copy last month's plan"))}</button>
+      <button class="btn" data-act="planFill" ${dis}>🎯 ${esc(t('Use my usual budgets'))}</button>
+    </div>
+  </div>
+  </div>
+
+  <div class="cards-2">
+  <div class="card"><h3>💰 ${esc(t('Expected income'))}</h3>
+    <label class="field"><span>${esc(t('Income I expect this month'))}</span><input class="input" inputmode="decimal" data-planinc value="${expInc || ''}" placeholder="0" ${dis}></label>
+    <p class="small muted" style="margin:0">${th('Received so far: {a}', { a: M(st.income) })}</p>
+  </div>
+  <div class="card"><h3>🗒️ ${esc(t('Notes for this month'))}</h3>
+    <textarea class="input" data-plannote maxlength="1000" placeholder="${esc(t('e.g. Diwali on the 8th, cousin\'s wedding, car service'))}" ${dis}>${esc(p.note || '')}</textarea>
+  </div>
+  </div>`;
+}
+
+function wirePlanner(v) {
+  const mk = S.ui.planMonth; if (!mk) return;
+  const saved = () => { cleanupPlan(mk); persist(); scheduleAlertCheck(); };
+  $$('[data-plancat]', v).forEach(inp => { inp.onchange = () => {
+    const n = inp.value.trim() === '' ? 0 : num(inp.value);
+    if (!(n >= 0)) { toast(t('Please enter a valid amount'), '', 'warning'); return; }
+    const p = planOf(mk, true); if (n > 0) p.cats[inp.dataset.plancat] = round2(n); else delete p.cats[inp.dataset.plancat];
+    saved(); render();
+  }; });
+  const inc = $('[data-planinc]', v);
+  if (inc) inc.onchange = () => {
+    const n = inc.value.trim() === '' ? 0 : num(inc.value);
+    if (!(n >= 0)) { toast(t('Please enter a valid amount'), '', 'warning'); return; }
+    planOf(mk, true).income = round2(n); saved(); render();
+  };
+  const note = $('[data-plannote]', v); let nt;
+  if (note) note.oninput = () => { clearTimeout(nt); nt = setTimeout(() => { planOf(mk, true).note = note.value.trim(); saved(); }, 500); };
+  $$('[data-plantick]', v).forEach(cb => { cb.onchange = () => togglePaid(mk, cb.dataset.plantick, cb.checked); });
+}
+
+/** Tick = paid: the payment is added to the daily ledger (on its due date, or today). Untick removes it again. */
+function togglePaid(mk, id, paid) {
+  const it = planOf(mk)?.items?.[id]; if (!it) return;
+  if (!canEditBy(it.by)) { render(); return notAllowed(it.by); }
+  if (paid && !it.done) {
+    const tk = todayKey(), dk = dueKey(mk, it);
+    const date = dk && dk <= tk ? dk : (mkey(tk) === mk ? tk : dk || `${mk}-01`);
+    const key = 'x_' + uid(), c = catInfo(it.cat);
+    dayObj(date).lines[key] = { name: it.name, icon: c.icon, cat: c.id, price: +it.amount, unit: 'each', qUnit: 'each', qty: 1 };
+    Object.assign(it, { done: true, ldate: date, lkey: key });
+    toast(t('✅ Paid'), t('{a} added to the ledger for {d}.', { a: money(it.amount), d: fmtShort(date) }));
+  } else if (!paid && it.done) {
+    const day = S.data.ledger[it.ldate];
+    if (day) { const k = Object.keys(day.lines).find(x => x === it.lkey || x.startsWith(it.lkey + '@')); if (k) delete day.lines[k]; cleanupDay(it.ldate); }
+    Object.assign(it, { done: false, ldate: '', lkey: '' });
+  }
+  persist(); render(); scheduleAlertCheck();
+}
+
+function planItemModal(mk, id) {
+  const p = planOf(mk), existing = id ? p?.items?.[id] : null;
+  if (existing && !canEditBy(existing.by)) return notAllowed(existing.by);
+  const it = existing || { name: '', amount: '', cat: 'other', day: 0 };
+  const dim = daysInMonth(mk);
+  modal(`<h3>${existing ? '✏️ ' + esc(t('Edit planned payment')) : '➕ ' + esc(t('Add a planned payment'))}</h3>
+    <p class="small muted" style="margin-top:-6px">${esc(fmtMonth(mk))}</p>
+    <form id="mf">
+      <label class="field"><span>${esc(t('What is it for?'))}</span><input class="input" name="name" maxlength="60" value="${esc(it.name)}" placeholder="${esc(t('e.g. School fees'))}"></label>
+      <label class="field"><span>${esc(t('Amount'))}</span><input class="input" name="amount" inputmode="decimal" value="${esc(it.amount)}" placeholder="0"></label>
+      <label class="field"><span>${esc(t('Type of expense'))}</span><select class="input" name="cat">${catOptions(catInfo(it.cat).id)}</select></label>
+      <label class="field"><span>${esc(t('Due date'))}</span><select class="input" name="day">
+        <option value="0">${esc(t('No fixed date'))}</option>
+        ${Array.from({ length: dim }, (_, i) => i + 1).map(d => `<option value="${d}" ${+it.day === d ? 'selected' : ''}>${esc(fmtShort(`${mk}-${pad(d)}`))}</option>`).join('')}
+      </select></label>
+      <div class="error-msg" id="merr"></div>
+      <div class="actions">
+        ${existing ? `<button type="button" class="btn danger" data-del>🗑 ${esc(t('Delete'))}</button>` : `<button type="button" class="btn" data-close>${esc(t('Cancel'))}</button>`}
+        <button class="btn primary">${esc(t('Save'))}</button></div>
+    </form>`, (box, close) => {
+    const f = $('#mf', box);
+    $('[data-del]', box)?.addEventListener('click', async () => {
+      close();
+      if (await confirmBox(t('Delete the planned payment "{i}"?', { i: it.name }), t('Delete'), true)) {
+        if (existing.done) togglePaid(mk, id, false);
+        delete planOf(mk).items[id]; cleanupPlan(mk); persist(); render(); scheduleAlertCheck();
+      }
+    });
+    f.onsubmit = ev => {
+      ev.preventDefault();
+      const name = f.name.value.trim(), amount = num(f.amount.value);
+      if (!name) { $('#merr', box).textContent = t('Please write what it is for.'); return; }
+      if (!(amount > 0)) { $('#merr', box).textContent = t('Please enter the amount.'); return; }
+      const rec = { name, amount: round2(amount), cat: f.cat.value, day: +f.day.value || 0 };
+      const pl = planOf(mk, true);
+      if (existing) Object.assign(existing, rec);
+      else pl.items[uid()] = { ...rec, done: false, ldate: '', lkey: '', by: myId() };
+      persist(); close(); render(); scheduleAlertCheck();
+      toast(t('✅ Saved'), `${name} – ${money(amount)}`);
+    };
+  });
+}
+async function copyPlan(mk) {
+  const prev = planOf(addMonths(mk, -1));
+  if (!prev) return infoBox(t('Nothing to copy'), t('Last month has no plan yet.'));
+  const cur = planOf(mk);
+  if (cur && (Object.keys(cur.cats || {}).length || Object.keys(cur.items || {}).length) &&
+      !(await confirmBox(t("Add last month's plan to this month? Amounts you already typed for a type of expense will be replaced."), t('Yes, copy')))) return;
+  const p = planOf(mk, true);
+  Object.assign(p.cats, prev.cats || {});
+  if (!(p.income > 0)) p.income = prev.income || 0;
+  for (const it of Object.values(prev.items || {})) {
+    if (Object.values(p.items).some(x => x.name === it.name && x.amount === it.amount)) continue;
+    p.items[uid()] = { name: it.name, amount: it.amount, cat: it.cat, day: it.day, done: false, ldate: '', lkey: '', by: myId() };
+  }
+  persist(); render(); scheduleAlertCheck();
+  toast(t('✅ Copied'), t("Last month's plan was added. Change anything you need."));
+}
+function fillFromBudgets(mk) {
+  const withBudget = S.data.categories.filter(c => c.budget > 0);
+  if (!withBudget.length) return infoBox(t('No usual budgets yet'), t('Set budgets for each type of expense in Settings first.'));
+  const p = planOf(mk, true);
+  for (const c of withBudget) p.cats[c.id] = c.budget;
+  persist(); render(); scheduleAlertCheck();
+  toast(t('✅ Saved'), t('Your usual budgets were filled in.'));
+}
+
+/* ---------------------------------------------------------------------
    FAMILY SHARING – live sync through the family's own Supabase project.
    Each record is encrypted with the family key (AES-256-GCM) on this device
    before it is sent; the cloud only ever stores scrambled text.
@@ -2171,8 +2447,15 @@ const shared = () => !!sy()?.book;
 const myId = () => sy()?.me;
 const myRole = () => (shared() ? sy().role : 'owner');
 const canManage = () => myRole() === 'owner' || myRole() === 'editor';
+/** The device that started the family book (older set-ups: the owner) */
+const isCreator = () => shared() && (sy().creator ?? sy().role === 'owner');
 const canEditBy = by => !shared() || canManage() || !by || by === myId();
-const memberName = id => (!id || id === myId() ? t('You') : sy()?.members?.[id]?.name || t('Family member'));
+const memberName = id => {
+  if (!id || id === myId()) return t('You');
+  const m = sy()?.members?.[id];
+  if (m?.role === 'owner' && sy().role === 'owner' && m.name === sy().name) return t('your other device');
+  return m?.name || t('Family member');
+};
 const roleLabel = r => t(r === 'owner' ? 'Owner' : r === 'editor' ? 'Can add & edit everything' : 'Can add & edit own expenses');
 function notAllowed(by) {
   toast(t('🔒 Not allowed'), by && by !== myId()
@@ -2206,6 +2489,11 @@ function recordsOf(d) {
     }
     if (day.note) m.set(`N|${date}|${me}`, { text: day.note });
   }
+  for (const [mk, p] of Object.entries(d.plans || {})) {
+    if (p.income > 0 || p.note || Object.keys(p.cats || {}).length) m.set(`P|${mk}`, { income: p.income || 0, cats: p.cats || {}, note: p.note || '' });
+    for (const [id, it] of Object.entries(p.items || {}))
+      m.set(`Q|${mk}|${id}`, { name: it.name, amount: it.amount, cat: it.cat, day: it.day || 0, done: !!it.done, ldate: it.ldate || '', lkey: it.lkey || '' });
+  }
   return m;
 }
 /** Puts one record received from the family into this device's data. */
@@ -2238,6 +2526,15 @@ function applyRecord(id, author, deleted, v) {
     if (deleted) delete day.lines[key];
     else day.lines[key] = { name: v.name, icon: v.icon, cat: v.cat, price: v.price, unit: v.unit, qUnit: v.qUnit || v.unit, qty: v.qty };
     cleanupDay(date);
+  } else if (kind === 'P' || kind === 'Q') {
+    const mk = p[1], plan = (d.plans[mk] ||= { income: 0, cats: {}, note: '', items: {} });
+    plan.items ||= {};
+    if (kind === 'P') {
+      if (deleted) Object.assign(plan, { income: 0, cats: {}, note: '' });
+      else Object.assign(plan, { income: v.income || 0, cats: { ...(v.cats || {}) }, note: v.note || '', pby: author });
+    } else if (deleted) delete plan.items[p[2]];
+    else plan.items[p[2]] = { name: v.name, amount: v.amount, cat: v.cat, day: v.day || 0, done: !!v.done, ldate: v.ldate || '', lkey: v.lkey || '', by: author };
+    cleanupPlan(mk);
   } else if (kind === 'N') {
     const [, date, by] = p;
     if (by !== author) return;
@@ -2453,7 +2750,7 @@ async function enableSharing(cfg, name) {
   const book = await rpc('ha_create_book', { p_key_check: await sealRec({ check: 'home-accounts' }), p_name_enc: await sealRec({ n: name }) }, cfg);
   const d = S.data;
   for (const x of [...d.items, ...d.categories, ...d.income]) x.by = a.uid;
-  d.sync = { url: cleanUrl(cfg.url), anon: cfg.anon, rt: cfg.rt, book, me: a.uid, role: 'owner', name, fk: b64(fk), cursor: 0, snap: {},
+  d.sync = { url: cleanUrl(cfg.url), anon: cfg.anon, rt: cfg.rt, book, me: a.uid, role: 'owner', creator: true, name, fk: b64(fk), cursor: 0, snap: {},
     members: { [a.uid]: { name, role: 'owner', status: 'active' } } };
   fk.fill(0);
   persist(true);
@@ -2491,7 +2788,7 @@ async function joinFamily(inv, name) {
   // Keep my own expenses and income; use the family's item list, types of expense and settings.
   d.items = []; d.categories = d.categories.filter(c => c.id === 'other');
   for (const i of d.income) i.by = a.uid;
-  d.sync = { url: cfg.url, anon: cfg.anon, rt: cfg.rt, book: j.book_id, me: a.uid, role: j.role, name, fk: inv.f, cursor: 0, snap: {}, members: {} };
+  d.sync = { url: cfg.url, anon: cfg.anon, rt: cfg.rt, book: j.book_id, me: a.uid, role: j.role, creator: false, name, fk: inv.f, cursor: 0, snap: {}, members: {} };
   persist(true);
   stopSync();
   await syncNow({ force: true, members: true, throwErrors: true, afterPull: () => remapAfterJoin(oldItems) });
@@ -2518,11 +2815,12 @@ function dropSharing(keepFamilyEntries) {
 
 function familyCard() {
   const s = sy();
-  if (!s) return `<div class="card" id="familyCard"><h3>👨‍👩‍👧 ${esc(t('Family sharing'))}</h3>
+  if (!s) return `<div class="card" id="familyCard"><h3>👨‍👩‍👧 ${esc(t('Family sharing & your devices'))}</h3>
     <p class="small">${esc(t('Share this account book with your family. Everyone adds their own daily expenses from their own phone, and the family totals, budget and warnings include everyone.'))}</p>
+    <p class="small">📱💻 ${esc(t('The same way, you can use your accounts on several of your own devices (phone, tablet, computer) and keep them all up to date.'))}</p>
     <div class="alert good"><span class="ico">🛡️</span><div class="small">${th('Entries are **encrypted on each phone** before they go to the family cloud. The cloud stores only scrambled text that it cannot read.')}</div></div>
     <div class="grid-2"><button class="btn primary" data-act="familySetup">➕ ${esc(t('Start a family book'))}</button>
-      <button class="btn" data-act="familyJoin">🔗 ${esc(t('Join a family'))}</button></div></div>`;
+      <button class="btn" data-act="familyJoin">🔗 ${esc(t('Join a family / link this device'))}</button></div></div>`;
   const people = Object.entries(s.members || {}).filter(([, m]) => m.status === 'active');
   const problem = ['removed', 'signedout'].includes(SYNC.status);
   return `<div class="card" id="familyCard"><h3>👨‍👩‍👧 ${esc(t('Family sharing'))}</h3>
@@ -2530,14 +2828,15 @@ function familyCard() {
     <p class="small muted">${th('You: **{n}** – {r}', { n: esc(s.name || t('You')), r: esc(roleLabel(s.role)) })}</p>
     ${problem ? `<div class="alert danger"><span class="ico">⚠️</span><div class="small">${esc(syncStatusText())}<div><button class="btn sm" data-act="familyDrop" style="margin-top:8px">${esc(t('Stop syncing on this device'))}</button></div></div></div>` : ''}
     <div class="small" style="font-weight:700;margin:8px 0 4px">${esc(t('Family members'))} (${people.length})</div>
-    ${people.map(([id, m]) => `<div class="list-row"><span class="emo" aria-hidden="true">${m.role === 'owner' ? '👑' : '👤'}</span>
-      <div class="main"><div class="t">${esc(id === s.me ? t('{n} (you)', { n: m.name || t('You') }) : m.name || t('Family member'))}</div><div class="small muted">${esc(roleLabel(m.role))}</div></div>
-      ${s.role === 'owner' && id !== s.me ? `<button class="btn sm" data-act="familyMember" data-id="${esc(id)}">✎</button>` : ''}</div>`).join('')}
+    ${people.map(([id, m]) => { const dev = m.role === 'owner' && id !== s.me && people.some(([pid, pm]) => pid !== id && pm.role === 'owner' && pm.name === m.name); return `<div class="list-row"><span class="emo" aria-hidden="true">${dev ? '📱' : m.role === 'owner' ? '👑' : '👤'}</span>
+      <div class="main"><div class="t">${esc(id === s.me ? t('{n} (you, this device)', { n: m.name || t('You') }) : m.name || t('Family member'))}</div><div class="small muted">${esc(dev ? t('Your other device') : roleLabel(m.role))}</div></div>
+      ${s.role === 'owner' && id !== s.me ? `<button class="btn sm" data-act="familyMember" data-id="${esc(id)}" aria-label="${esc(t('Change'))}">✎</button>` : ''}</div>`; }).join('')}
     <div class="grid-2" style="margin-top:12px">
-      ${s.role === 'owner' ? `<button class="btn primary" data-act="familyInvite">➕ ${esc(t('Invite a family member'))}</button>` : ''}
+      ${s.role === 'owner' ? `<button class="btn primary" data-act="familyInvite">➕ ${esc(t('Invite a family member'))}</button>
+      <button class="btn" data-act="familyDevice">📱 ${esc(t('Link my other device'))}</button>` : ''}
       <button class="btn" data-act="familySync">🔄 ${esc(t('Sync now'))}</button>
     </div>
-    <button class="btn danger block" data-act="familyLeave" style="margin-top:10px">${esc(s.role === 'owner' ? t('Stop sharing (delete the family book from the cloud)') : t('Leave the family book'))}</button>
+    <button class="btn danger block" data-act="familyLeave" style="margin-top:10px">${esc(isCreator() ? t('Stop sharing (delete the family book from the cloud)') : s.role === 'owner' ? t('Unlink this device') : t('Leave the family book'))}</button>
   </div>`;
 }
 function byPersonCard(mk, st) {
@@ -2581,11 +2880,13 @@ function familySetupModal() {
     };
   });
 }
-function inviteModal() {
-  modal(`<h3>➕ ${esc(t('Invite a family member'))}</h3>
-    <p class="small">${esc(t('What may this person do?'))}</p>
-    <div class="role-pick">
-      <label class="check"><input type="radio" name="role" value="member" checked> <span><b>${esc(t('Can add & edit own expenses'))}</b><br><span class="small muted">${esc(t('Adds their daily expenses. Can change or delete only what they added.'))}</span></span></label>
+function inviteModal(opts = {}) {
+  const device = !!opts.device;
+  modal(`<h3>${device ? '📱 ' + esc(t('Link my other device')) : '➕ ' + esc(t('Invite a family member'))}</h3>
+    ${device ? `<p class="small">${esc(t('Use your accounts on another phone, tablet or computer. It will show the same data and stay in sync, with full owner rights.'))}</p>
+      <input type="radio" name="role" value="owner" checked hidden>` : `<p class="small">${esc(t('What may this person do?'))}</p>`}
+    <div class="role-pick" ${device ? 'hidden' : ''}>
+      <label class="check"><input type="radio" name="role" value="member" ${device ? '' : 'checked'}> <span><b>${esc(t('Can add & edit own expenses'))}</b><br><span class="small muted">${esc(t('Adds their daily expenses. Can change or delete only what they added.'))}</span></span></label>
       <label class="check"><input type="radio" name="role" value="editor"> <span><b>${esc(t('Can add & edit everything'))}</b><br><span class="small muted">${esc(t("Can also change or delete anyone's entries, items and budgets."))}</span></span></label>
     </div>
     <div id="invOut"></div>
@@ -2596,11 +2897,15 @@ function inviteModal() {
       await busy(ev.currentTarget, t('Please wait…'), async () => {
         let code;
         try { code = await rpc('ha_create_invite', { p_book: s.book, p_role: role }); } catch (e) { $('#merr', box).textContent = setupError(e); return; }
-        const payload = 'HA1.' + b64u(JSON.stringify({ v: 1, u: s.url, k: s.anon, c: code, f: s.fk }));
+        const payload = 'HA1.' + b64u(JSON.stringify({ v: 1, u: s.url, k: s.anon, c: code, f: s.fk, ...(device ? { d: 1, n: s.name } : {}) }));
         const link = isWeb ? `${location.origin}${location.pathname}#join=${payload}` : '';
-        const text = `${t('Join our family account book in Home Accounts.')}\n${link ? link + '\n\n' : ''}${t('Or open Home Accounts → Settings → Family sharing → Join a family, and paste this code:')}\n${payload}`;
+        const text = device
+          ? `${t('Open this on your other device to link it to Home Accounts:')}\n${link ? link + '\n\n' : ''}${t('Or open Home Accounts on that device → Settings → Family sharing → Join a family / link this device, and paste this code:')}\n${payload}`
+          : `${t('Join our family account book in Home Accounts.')}\n${link ? link + '\n\n' : ''}${t('Or open Home Accounts → Settings → Family sharing → Join a family, and paste this code:')}\n${payload}`;
         $('#invOut', box).innerHTML = `
-          <div class="alert warning"><span class="ico">🔑</span><div class="small">${th('Send this **only to that person** (for example in a private WhatsApp chat). It works **once** and expires in **48 hours**.')}</div></div>
+          <div class="alert warning"><span class="ico">🔑</span><div class="small">${device
+            ? th('Keep this **private** – send it only to yourself (for example by email to yourself, or copy it). It works **once** and expires in **48 hours**.')
+            : th('Send this **only to that person** (for example in a private WhatsApp chat). It works **once** and expires in **48 hours**.')}</div></div>
           <textarea class="input invite-text" readonly rows="5">${esc(text)}</textarea>
           <div class="grid-2" style="margin-top:8px">${navigator.share ? `<button type="button" class="btn primary" id="invShare">📤 ${esc(t('Send'))}</button>` : ''}
             <button type="button" class="btn" id="invCopy">📋 ${esc(t('Copy'))}</button></div>`;
@@ -2617,11 +2922,14 @@ function inviteModal() {
 }
 function joinModal(prefill = '') {
   if (shared()) return infoBox(t('Already sharing'), t('This device is already part of a family book. Leave it first to join another.'));
-  modal(`<h3>🔗 ${esc(t('Join a family'))}</h3>
-    <p class="small">${esc(t('Paste the invite you received. Your own expenses on this device will be added to the family book; the family\'s item list, budgets and currency will be used.'))}</p>
+  const pre = parseInvite(prefill), device = !!pre?.d;
+  modal(`<h3>🔗 ${esc(device ? t('Link this device') : t('Join a family / link this device'))}</h3>
+    <p class="small">${esc(device
+      ? t('This device will show the same accounts as your other device and stay in sync. Anything already recorded on this device is kept and added.')
+      : t('Paste the invite you received. Your own expenses on this device will be added to the family book; the family\'s item list, budgets and currency will be used.'))}</p>
     <form id="mf" autocomplete="off">
       <label class="field"><span>${esc(t('Invite'))}</span><textarea class="input" name="inv" rows="3" placeholder="HA1.…" spellcheck="false">${esc(prefill)}</textarea></label>
-      <label class="field"><span>${esc(t('Your name (as your family will see it)'))}</span><input class="input" name="name" maxlength="30" value="${esc(S.data.settings.name)}"></label>
+      <label class="field"><span>${esc(t('Your name (as your family will see it)'))}</span><input class="input" name="name" maxlength="30" value="${esc(pre?.n || S.data.settings.name)}"></label>
       <div class="error-msg" id="merr"></div>
       <div class="actions"><button type="button" class="btn" data-close>${esc(t('Cancel'))}</button><button class="btn primary">${esc(t('Join'))}</button></div>
     </form>`, (box, close) => {
@@ -2636,13 +2944,27 @@ function joinModal(prefill = '') {
         try { await joinFamily(inv, name); }
         catch (e) { stopSync(); S.data = migrate(JSON.parse(before)); persist(true); $('#merr', box).textContent = setupError(e); return; }
         close(); render(); updateBadge();
-        toast(t('✅ You joined the family book'), t('Your expenses are now shared with your family.'));
+        if (inv.d) toast(t('✅ This device is linked'), t('Your accounts now stay the same on all your linked devices.'));
+        else toast(t('✅ You joined the family book'), t('Your expenses are now shared with your family.'));
       });
     };
   });
 }
 function memberModal(id) {
   const s = sy(), m = s.members[id]; if (!m) return;
+  if (m.role === 'owner') { // one of the owner's own devices: it can only be unlinked
+    return modal(`<h3>📱 ${esc(m.name || t('Your other device'))}</h3>
+      <p class="small">${esc(t('Unlink this device if it is lost, sold or no longer used. It will stop seeing and changing your accounts at once.'))}</p>
+      <div class="error-msg" id="merr"></div>
+      <div class="actions"><button type="button" class="btn" data-close>${esc(t('Cancel'))}</button><button type="button" class="btn danger" id="mUnlink">${esc(t('Unlink this device'))}</button></div>`, (box, close) => {
+      $('#mUnlink', box).onclick = async () => {
+        try { await rpc('ha_set_member', { p_book: s.book, p_user: id, p_role: 'owner', p_status: 'removed' }); }
+        catch (e) { $('#merr', box).textContent = setupError(e); return; }
+        delete s.members[id]; persist(true); close(); render();
+        toast(t('✅ Device unlinked'));
+      };
+    });
+  }
   modal(`<h3>👤 ${esc(m.name || t('Family member'))}</h3>
     <div class="role-pick">
       <label class="check"><input type="radio" name="role" value="member" ${m.role === 'member' ? 'checked' : ''}> <b>${esc(t('Can add & edit own expenses'))}</b></label>
@@ -2664,14 +2986,15 @@ function memberModal(id) {
   });
 }
 async function familyLeave() {
-  const owner = myRole() === 'owner';
-  const msg = owner
+  const creator = isCreator(), ownerDevice = !creator && myRole() === 'owner';
+  const msg = creator
     ? t('This deletes the family book from the cloud. Family members will stop syncing. All entries stay on this device.')
+    : ownerDevice ? t('This device will stop syncing. Everything already on it stays here.')
     : t("You will stop sharing. The family's entries will be removed from this device; your own entries stay.");
-  if (!(await confirmBox(msg, owner ? t('Delete family book') : t('Leave'), true))) return;
-  try { await rpc(owner ? 'ha_delete_book' : 'ha_leave', { p_book: sy().book }); }
+  if (!(await confirmBox(msg, creator ? t('Delete family book') : ownerDevice ? t('Unlink this device') : t('Leave'), true))) return;
+  try { await rpc(creator ? 'ha_delete_book' : 'ha_leave', { p_book: sy().book }); }
   catch (e) { if (!e.net && e.status !== 403 && !e.auth) return toast(t('Could not sync: {e}', { e: setupError(e) }), '', 'warning'); }
-  dropSharing(owner);
+  dropSharing(creator || ownerDevice);
   toast(t('✅ Sharing stopped'));
 }
 // An invite opened as a link (…#join=HA1.…) is remembered until the app is unlocked.
@@ -2684,7 +3007,8 @@ let pendingInvite = null;
 /* ---------------------------------------------------------------------
    Views & actions registry
    --------------------------------------------------------------------- */
-const VIEWS = { home: viewHome, ledger: viewLedger, income: viewIncome, reports: viewReports, settings: viewSettings };
+const VIEWS = { home: viewHome, ledger: viewLedger, planner: viewPlanner, income: viewIncome, reports: viewReports, settings: viewSettings };
+AFTER.planner = v => wirePlanner(v);
 const ACTIONS = {
   nav: el => go(el.dataset.to),
   openDay: el => { S.ui.date = el.dataset.date; S.ui.filter = 'all'; S.ui.q = ''; go('ledger'); },
@@ -2726,6 +3050,15 @@ const ACTIONS = {
     try { await installEvt.userChoice; } catch { /* ignore */ }
     installEvt = null; render();
   },
+  planYear: el => { S.ui.year += Number(el.dataset.d); render(); },
+  openPlan: el => { S.ui.planMonth = el.dataset.m; S.ui.year = +el.dataset.m.slice(0, 4); go('planner'); },
+  planBack: () => { S.ui.planMonth = null; render(); window.scrollTo(0, 0); },
+  planMonthNav: el => { S.ui.planMonth = addMonths(S.ui.planMonth, Number(el.dataset.d)); S.ui.year = +S.ui.planMonth.slice(0, 4); render(); },
+  planAdd: () => planItemModal(S.ui.planMonth),
+  planItem: el => planItemModal(S.ui.planMonth, el.dataset.id),
+  planCopy: () => copyPlan(S.ui.planMonth),
+  planFill: () => fillFromBudgets(S.ui.planMonth),
+  familyDevice: () => inviteModal({ device: true }),
   familySetup: () => familySetupModal(),
   familyJoin: () => joinModal(),
   familyInvite: () => inviteModal(),
