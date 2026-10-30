@@ -360,6 +360,11 @@ details.tv summary { cursor: pointer; color: var(--accent); margin-top: 8px; fon
 .plan-cat .input { min-height: 44px; padding: 6px 10px; }
 .plan-cat .progress { height: 8px; margin-top: 4px; }
 
+/* ---------- Accounts ---------- */
+.phone-row { gap: 8px; }
+.phone-row select.input { width: auto; flex: 0 0 auto; padding-left: 8px; padding-right: 4px; }
+.phone-row input.input { flex: 1; min-width: 0; letter-spacing: .5px; }
+
 /* ---------- Family sharing ---------- */
 .item-row.family { border-style: dashed; }
 .by-tag { font-size: .8rem; color: var(--info); font-weight: 600; margin: 1px 0 2px; }

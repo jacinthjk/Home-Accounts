@@ -5,81 +5,71 @@ Works on **computers and mobile phones**, in **English and தமிழ்**.
 📱 **Open the app:** <https://jacinthjk.github.io/Home-Accounts/>
 (Open it on a phone and choose "Add to Home screen" to install it.)
 
-## How to open it on a computer
-Double-click **index.html**. It opens in your web browser (Microsoft Edge or Google Chrome).
-No internet, no sign-up and no installation are needed.
+## Your account 👤 (mobile number + password)
+Everyone signs up once with their **mobile number**, which is their login, and a password.
+1. Open the app and choose **English** or **தமிழ்** at the top.
+2. Under **Create your account**, type your name, choose your country code (🇮🇳 +91 is already chosen) and type your mobile number. Then choose your currency and a password. A short phrase you remember works well, for example *mango tree 1984*.
+3. You will see a **recovery code**. **Write it on paper and keep it safe.** If you forget your password, this code is the only way back into your account.
 
-Tip: once it opens, press **Ctrl + D** to bookmark it so you can find it again easily.
+**On another phone, tablet or computer:** open the app, tap **I already have an account – Log in**, then type the same mobile number and password. All your accounts appear there and **stay in sync on all your devices**, both ways.
 
-## How to use it on a mobile phone 📱
-A phone cannot open files from your computer's folder, so the app must be opened from a **secure web address (https://…)**.
-Putting the app files online is safe: they contain **no accounts and no money details**. Your accounts are created and kept, encrypted, only on each phone.
+- **Forgot your password?** On the login screen tap **Forgot password? Use recovery code**. Type your mobile number, your recovery code and a new password.
+- **Changing your password** (Settings → Change password) changes it for all your devices.
+- **Sign out of a device** you no longer use: **Settings → Your account → Sign out of this device**. Your accounts stay safe in your account.
+- **Delete my account** (Settings, at the bottom) removes your account and everything in it from the cloud for good.
+- **No internet?** Every device keeps working offline and opens with your password. Changes are sent when the connection returns. Creating an account and logging in on a new device need internet.
 
-**Step 1 – Put the app online (one time, free).** Use either option:
-- **Netlify Drop (simplest):** go to <https://app.netlify.com/drop>, sign in with a free account, and drag this whole **Account Management** folder onto the page. You get an address like `https://something.netlify.app`.
-- **GitHub Pages:** create a free GitHub account, make a new repository, upload all the files in this folder, then turn on *Settings → Pages*. You get an address like `https://yourname.github.io/home-accounts/`.
+**Privacy.** Your password never leaves your device. The app turns it into two different keys: one to sign in, and one that unlocks your data, which is never sent anywhere. Everything is encrypted on your device before it goes to the cloud, so the cloud cannot read your expenses, income, names or amounts. Only your mobile number is visible to the cloud, because it is your login.
 
-**Step 2 – Install it on the phone.** Open that address on the phone:
+## Using it on a phone 📱
+Open **<https://jacinthjk.github.io/Home-Accounts/>** on the phone, then install it:
 - **Android (Chrome):** tap the **⋮** menu, then **Install app** or **Add to Home screen**. You can also use **Settings → Install the app** inside Home Accounts.
 - **iPhone (Safari):** tap the **Share** button ⬆️, then **Add to Home Screen**.
 
-It now has its own icon, opens full-screen like any other app, and **works without internet**.
-
-**Moving accounts between phone and computer.** Each device keeps its own locked copy. On the old device, go to **Settings → Make a backup**, or **Send backup** to share it through WhatsApp, Google Drive or email. On the new device, choose **Restore from a backup file**. The backup stays locked with your password the whole time.
+It gets its own icon, opens full-screen like any other app, and works without internet.
 
 ## Family sharing 👨‍👩‍👧
-Share one account book with your family. Everyone adds their own daily expenses from their own phone, and changes show up on everyone's phone within seconds. The family's totals, budgets, warnings and reports include everyone.
+Share one account book with your family. Everyone adds their own daily expenses from their own phone, with their own account. Changes show up on everyone's devices within seconds. The family's totals, budgets, warnings and reports include everyone.
 
-**What each person can do**
 | Role | Can do |
 |---|---|
-| 👑 **Owner** (whoever starts the family book) | Everything, plus invite and remove people |
+| 👑 **Owner** (whose account book it is) | Everything, plus invite and remove people |
 | **Can add & edit everything** | Add, change and delete anyone's entries, items and budgets |
 | **Can add & edit own expenses** | Add expenses and income, and change or delete only what they added. Everyone else's entries are shown with 🔒. |
 
 Each entry shows who added it ("👤 Added by Priya"). **Reports → Spending by family member** shows who spent what.
 
-**Privacy.** Every entry is encrypted on the phone with a secret family key *before* it is sent. The cloud only stores scrambled text: no item names, no amounts, not even your family members' names. Permissions are checked by the cloud itself, so a member cannot get around them.
-
-### One-time cloud set-up (owner, about 10 minutes, free)
-1. Go to <https://supabase.com>, create a free account, and click **New project**. Choose a region near you (for India: *Mumbai*) and any database password.
-2. When the project is ready, open **SQL Editor → New query**. Paste the whole contents of the file **family-sharing-setup.sql** from this folder and click **Run**.
-3. Open **Authentication → Sign In / Providers** and switch on **Allow anonymous sign-ins**, then **Save**. (Family members don't need email accounts; each phone gets its own private sign-in.)
-4. Open **Project Settings → API Keys**. Copy the **Project URL** (like `https://abcdxyz.supabase.co`) and the **Publishable key** (or the older "anon public" key).
-5. In Home Accounts: **Settings → Family sharing → Start a family book**. Paste both, type your name, and tap **Start sharing**.
-
-### Inviting family members
+**Inviting someone**
 1. **Settings → Family sharing → Invite a family member.** Choose what they may do, then tap **Create invite**.
 2. Tap **Send** (or **Copy**) and send it **privately** to that one person, for example in WhatsApp. An invite works **once** and expires in **48 hours**.
-3. They open the link on their phone, or go to **Settings → Family sharing → Join a family** and paste it. Their existing entries are added to the family book.
+3. They create their own account (or log in), then open the link, or go to **Settings → Family sharing → Join another family** and paste it. Their existing entries are added to the family book. All their devices follow automatically.
 
-### Using your accounts on several of your own devices 📱💻
-Want the same accounts on your phone **and** your computer (or a tablet)? Once the family cloud is set up (above):
-1. On the device you already use: **Settings → Family sharing → Link my other device → Create invite**. Send it to yourself, for example by email, or copy it.
-2. On the other device: open the app at its web address, create a password for that device, then open the link, or go to **Settings → Family sharing → Join a family / link this device** and paste it.
+**Good to know**
+- The ☁️ button at the top shows the sync status. Tap it to sync now.
+- The owner can change someone's permission or **remove** them (✎ next to their name). Removed people stop seeing new entries, and what they already added stays. They carry on with their own account book.
+- **Leave the family book** returns you to your own account book with your own entries.
+- Permissions are checked by the cloud itself, so a member cannot get around them.
 
-That device now shows exactly the same accounts and **stays in sync both ways**, with full owner rights. Entries made on one device show on the other as "Added by your other device". If a device is lost or sold, tap ✎ next to it in the family list and choose **Unlink this device**. It is cut off at once.
+## Setting up the cloud ☁️ (one time, for the person who runs the app)
+Accounts live in a free **Supabase** project. Everyone who uses the app shares it, and nobody else needs to do anything technical.
+1. Go to <https://supabase.com>, create a free account, and click **New project**. Choose a region near your users (for India: *Mumbai*) and any database password.
+2. Open **SQL Editor → New query**. Paste the whole contents of **cloud-setup.sql** from this folder and click **Run**. It is safe to run again; run it again whenever it is updated.
+3. Open **Authentication → Sign In / Providers → Email**:
+   - keep **Email** enabled and **Allow new users to sign up** on;
+   - turn **Confirm email** **OFF**. The app makes a sign-in address from the mobile number, such as 919876543210@phone.home-accounts.app, and no email is ever sent.
+   - You can leave **Anonymous sign-ins** off; it is no longer used.
+4. Open **Project Settings → API Keys** and copy the **Project URL** and the **Publishable key** (or the older "anon public" key).
+5. Put both into the file **config.js** in this folder, and publish the files again.
 
-> **Already ran the cloud set-up before October 30, 2026?** Run **family-sharing-setup.sql** in the Supabase SQL Editor once more. It is safe to repeat, and it adds device linking and month plans.
-
-### Good to know
-- Phones keep working **without internet**. Changes are sent automatically when the connection returns. The ☁️ button at the top shows the sync status; tap it to sync now.
-- The owner can change someone's permission or **remove** them (✎ next to their name). Removed people stop seeing new entries. What they already added stays.
-- A member who taps **Leave the family book** keeps only their own entries on their phone.
-- The free Supabase plan **pauses** a project after about a week with no use. If syncing stops, open your Supabase dashboard and click **Restore project**. Nothing is lost.
-- Keep making **backups**: the backup also keeps your connection to the family book. Restore it only on a phone that replaces an old one. To use a second device at the same time, use **Link my other device** instead.
+Notes:
+- The free plan suits a few hundred users. It **pauses** after about a week with no use; if that happens, open the Supabase dashboard and click **Restore project**. Nothing is lost. A busier app may need the paid plan.
+- Mobile numbers are not verified by SMS. Anyone could sign up with a number they do not own, but that number then belongs to that account. Real SMS checks can be added later with a paid SMS provider.
 
 ## Language / மொழி 🌐
 Tap **English / தமிழ்** on the login screen, the **அ / A** button at the top, or **Settings → Language**.
 - All screens, warnings and messages change language.
 - Standard item names (அரிசி, பால், முட்டை…) are shown in Tamil, with the English name in small letters underneath.
 - Items you add yourself keep the name you typed.
-
-## First time
-1. Choose **English** or **தமிழ்** at the top.
-2. Type your name (optional) and choose your currency.
-3. Create a password. A short phrase you remember works well, for example *mango tree 1984*.
-4. You will see a **recovery code**. **Write it on paper and keep it safe.** If you forget your password, this code is the only way to open your accounts.
 
 ## Every day – the Daily Ledger 📒
 - Each date has its own ledger page. Use ◀ ▶ to move between days, or pick a date.
@@ -140,11 +130,11 @@ Set a **monthly budget** in Settings. You can also set a budget for each type of
 - Five wrong passwords in a row make the app wait before you can try again.
 
 ## Backups 💾 (important)
-Your accounts are stored inside the browser. If the browser data is cleared or the computer is changed, they are lost unless you have a backup.
+Your accounts are kept on each of your devices and, encrypted, in your account in the cloud. A backup file is an extra safety copy that you keep yourself.
 - Go to **Settings → Make a backup** about once every two weeks. The app reminds you.
 - The backup file is locked with your password. Copy it to a pen drive.
 - On a phone, **Send backup** lets you save it straight to Google Drive or send it to yourself on WhatsApp.
-- To move to a new computer, copy this folder there, open index.html and choose **Restore from a backup file**.
+- To use your accounts on another device, simply log in there with your mobile number and password. Backups are an extra safety copy.
 
 **Notes**
 - Printed reports and **Export to Excel** files are *not* password protected. Delete them when you are done.
@@ -154,10 +144,11 @@ Your accounts are stored inside the browser. If the browser data is cleared or t
 | File | What it is |
 |---|---|
 | `index.html` | the page that opens |
+| `config.js` | the address of your cloud (Supabase) – fill in once |
 | `app.js` | the app itself |
 | `i18n.js` | Tamil translations (add or correct Tamil words here) |
 | `styles.css` | look and layout for phone, tablet and computer |
 | `manifest.webmanifest`, `sw.js`, `icons/` | let phones install the app and use it offline |
-| `family-sharing-setup.sql` | one-time set-up for the family cloud (run in Supabase) |
+| `cloud-setup.sql` | one-time set-up for the family cloud (run in Supabase) |
 
 After changing any file on the website, raise the `VERSION` number at the top of `sw.js` (for example `home-accounts-v5`). Installed phones then pick up the new version.

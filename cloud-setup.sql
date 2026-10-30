@@ -1,10 +1,18 @@
 -- =====================================================================
--- Home Accounts – Family sharing: one-time cloud set-up (Supabase)
+-- Home Accounts – one-time cloud set-up (Supabase)
 --
 -- HOW TO USE: Supabase dashboard → your project → SQL Editor → New query
 --             → paste this whole file → Run.  (Safe to run again.)
--- VERSION 2 (Oct 2026): adds linking your own other devices and month plans.
---             If you ran an older version, simply run this file again.
+-- VERSION 3 (Oct 2026): accounts with a mobile number + password, so a
+--             person can log in on several devices. Version 2 added month
+--             plans. If you ran an older version, simply run this file again.
+--
+-- ACCOUNTS: the app signs people in with Supabase's email + password
+-- sign-in, using an address made from the mobile number
+-- (e.g. 919876543210@phone.home-accounts.app – no email is ever sent).
+-- In Authentication → Sign In / Providers → Email, turn OFF "Confirm email".
+-- The password itself never reaches the cloud: the app sends a value derived
+-- from it, and keeps a different derived key (that unlocks the data) on the phone.
 --
 -- PRIVACY: every entry is encrypted on the phone before it is sent.
 -- This database only ever stores scrambled text ("blob") that it cannot read.
@@ -246,6 +254,115 @@ begin
   end loop;
   return jsonb_build_object('ok', ok, 'rejected', bad);
 end $$;
+
+-- =====================================================================
+-- ACCOUNTS (version 3)
+-- One profile per account, keyed by mobile number (unique). It holds only
+-- locked boxes: the person's data key locked with their password
+-- (pw_wrap) and with their recovery code (rc_wrap), and their key ring
+-- (which family book they use and its key) locked with that data key.
+-- The cloud cannot open any of them.
+-- =====================================================================
+create table if not exists public.ha_profiles (
+  user_id     uuid primary key,
+  phone       text not null unique check (phone ~ '^\+[0-9]{8,15}$'),
+  pw_wrap     text not null check (length(pw_wrap) < 2000),
+  rc_wrap     text check (rc_wrap is null or length(rc_wrap) < 2000),
+  rc_verifier text check (rc_verifier is null or rc_verifier ~ '^[0-9a-f]{64}$'),
+  keyring     text check (keyring is null or length(keyring) < 20000),
+  created_at  timestamptz not null default now(),
+  updated_at  timestamptz not null default now()
+);
+alter table public.ha_profiles enable row level security;
+revoke all on table public.ha_profiles from public, anon, authenticated;
+
+-- The account's sign-in address must be the one made from this mobile number
+create or replace function public.ha_phone_matches(p_phone text) returns boolean
+language sql stable security definer set search_path = public as $$
+  select exists (select 1 from auth.users u where u.id = auth.uid()
+                 and lower(u.email) = substr(p_phone, 2) || '@phone.home-accounts.app')
+$$;
+
+-- Called once, right after signing up
+create or replace function public.ha_register(p_phone text, p_pw_wrap text, p_rc_wrap text, p_rc_verifier text, p_keyring text) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if auth.uid() is null then raise exception 'not signed in' using errcode = '42501'; end if;
+  if not public.ha_phone_matches(p_phone) then raise exception 'mobile number does not match the account' using errcode = '42501'; end if;
+  insert into public.ha_profiles (user_id, phone, pw_wrap, rc_wrap, rc_verifier, keyring)
+  values (auth.uid(), p_phone, p_pw_wrap, p_rc_wrap, p_rc_verifier, p_keyring)
+  on conflict (user_id) do update set pw_wrap = excluded.pw_wrap, rc_wrap = excluded.rc_wrap,
+    rc_verifier = excluded.rc_verifier, keyring = excluded.keyring, updated_at = now();
+end $$;
+
+-- The caller's own profile (null if not registered yet)
+create or replace function public.ha_profile_get() returns json
+language sql stable security definer set search_path = public as $$
+  select json_build_object('phone', p.phone, 'pw_wrap', p.pw_wrap, 'rc_wrap', p.rc_wrap, 'keyring', p.keyring)
+  from public.ha_profiles p where p.user_id = auth.uid()
+$$;
+
+-- Update the caller's profile (null = keep as it is)
+create or replace function public.ha_profile_update(p_pw_wrap text default null, p_rc_wrap text default null,
+  p_rc_verifier text default null, p_keyring text default null) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if auth.uid() is null then raise exception 'not signed in' using errcode = '42501'; end if;
+  update public.ha_profiles set
+    pw_wrap = coalesce(p_pw_wrap, pw_wrap), rc_wrap = coalesce(p_rc_wrap, rc_wrap),
+    rc_verifier = coalesce(p_rc_verifier, rc_verifier), keyring = coalesce(p_keyring, keyring), updated_at = now()
+  where user_id = auth.uid();
+  if not found then raise exception 'no profile' using errcode = 'P0001'; end if;
+end $$;
+
+-- Forgot password, step 1: prove you have the recovery code; get the box it opens.
+-- (The proof is derived from the 20-character recovery code, so guessing is hopeless.)
+create or replace function public.ha_recovery_start(p_phone text, p_proof text) returns json
+language plpgsql security definer set search_path = public as $$
+declare pr public.ha_profiles;
+begin
+  select * into pr from public.ha_profiles where phone = p_phone;
+  if not found or pr.rc_verifier is null or pr.rc_verifier <> encode(sha256(convert_to(coalesce(p_proof, ''), 'UTF8')), 'hex') then
+    raise exception 'recovery code not correct' using errcode = 'P0001';
+  end if;
+  return json_build_object('rc_wrap', pr.rc_wrap);
+end $$;
+
+-- Forgot password, step 2: set the new password (as the app derives it) and the newly locked data key
+create or replace function public.ha_recovery_finish(p_phone text, p_proof text, p_new_auth text, p_pw_wrap text) returns void
+language plpgsql security definer set search_path = public as $$
+declare pr public.ha_profiles;
+begin
+  select * into pr from public.ha_profiles where phone = p_phone for update;
+  if not found or pr.rc_verifier is null or pr.rc_verifier <> encode(sha256(convert_to(coalesce(p_proof, ''), 'UTF8')), 'hex') then
+    raise exception 'recovery code not correct' using errcode = 'P0001';
+  end if;
+  if length(coalesce(p_new_auth, '')) < 20 or length(coalesce(p_pw_wrap, '')) < 20 then
+    raise exception 'bad value' using errcode = 'P0001';
+  end if;
+  update auth.users set encrypted_password = extensions.crypt(p_new_auth, extensions.gen_salt('bf')), updated_at = now()
+  where id = pr.user_id;
+  update public.ha_profiles set pw_wrap = p_pw_wrap, updated_at = now() where user_id = pr.user_id;
+end $$;
+
+-- Delete my account: my profile, the family books I started, my memberships and my sign-in
+create or replace function public.ha_delete_account() returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if auth.uid() is null then raise exception 'not signed in' using errcode = '42501'; end if;
+  delete from public.ha_books where owner = auth.uid();
+  delete from public.ha_members where user_id = auth.uid();
+  delete from public.ha_profiles where user_id = auth.uid();
+  delete from auth.users where id = auth.uid();
+end $$;
+
+revoke all on function public.ha_phone_matches(text) from public, anon, authenticated;
+revoke all on function public.ha_register(text, text, text, text, text), public.ha_profile_get(),
+  public.ha_profile_update(text, text, text, text), public.ha_delete_account() from public, anon;
+grant execute on function public.ha_register(text, text, text, text, text), public.ha_profile_get(),
+  public.ha_profile_update(text, text, text, text), public.ha_delete_account() to authenticated;
+revoke all on function public.ha_recovery_start(text, text), public.ha_recovery_finish(text, text, text, text) from public;
+grant execute on function public.ha_recovery_start(text, text), public.ha_recovery_finish(text, text, text, text) to anon, authenticated;
 
 -- Only signed-in app users may call these; the helper is internal only.
 revoke all on function public.ha_role(uuid) from public, anon, authenticated;

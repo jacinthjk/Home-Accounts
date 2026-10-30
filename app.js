@@ -65,7 +65,8 @@ function setLang(l) {
   LANG = l === 'ta' ? 'ta' : 'en';
   writePrefs({ lang: LANG });
   paintShell();
-  if (S.dataKey) { render(); updateBadge(); } else if (!L.classList.contains('hidden')) showLock(lockMsg);
+  if (!L.classList.contains('hidden')) (lockScreen || (() => showLock(lockMsg)))(); // stay on the same screen
+  else if (S.dataKey) { render(); updateBadge(); }
 }
 /** Static parts of the page (menu, top bar) in the current language. */
 function paintShell() {
@@ -544,12 +545,171 @@ const busy = async (btn, label, fn) => {
 };
 
 /* ---------------------------------------------------------------------
-   Lock screen: setup, unlock, recovery, restore
+   Accounts & lock screen
+   Everyone signs up with a mobile number (their unique login) + password,
+   and can log in on any device. The password is never sent anywhere:
+     • authSecret (PBKDF2 of password + number) is what the cloud sign-in sees;
+     • a different key, also from the password, unlocks the data key.
+   The data key unlocks this device's copy and the person's key ring in
+   the cloud (which family book they use, and that book's key).
    --------------------------------------------------------------------- */
 const L = $('#lock');
 let lockMsg = '';
+let lockScreen = null; // the lock screen now shown, so a language switch can draw it again
 const frame = inner => `<div class="lock-card">${langSwitch()}<div class="lock-logo" aria-hidden="true">📒</div><h1>${esc(t('Home Accounts'))}</h1>${inner}</div>`;
 const curOptions = sel => Object.entries(CURRENCIES).map(([k, c]) => `<option value="${k}" ${k === sel ? 'selected' : ''}>${esc(nm(c.name))}</option>`).join('');
+
+const HA_CFG = () => window.HA_CONFIG || {};
+const cloudReady = () => !!(HA_CFG().supabaseUrl && HA_CFG().supabaseKey);
+const cloudCfg = () => ({ url: cleanUrl(HA_CFG().supabaseUrl), anon: String(HA_CFG().supabaseKey || '').trim() });
+const phoneEmail = p => `${p.slice(1)}@phone.home-accounts.app`;
+const COUNTRIES = [['91', '🇮🇳'], ['94', '🇱🇰'], ['92', '🇵🇰'], ['880', '🇧🇩'], ['977', '🇳🇵'], ['971', '🇦🇪'], ['966', '🇸🇦'], ['974', '🇶🇦'],
+  ['965', '🇰🇼'], ['968', '🇴🇲'], ['973', '🇧🇭'], ['65', '🇸🇬'], ['60', '🇲🇾'], ['44', '🇬🇧'], ['1', '🇺🇸'], ['61', '🇦🇺'], ['64', '🇳🇿'],
+  ['234', '🇳🇬'], ['254', '🇰🇪'], ['27', '🇿🇦']];
+/** "+919876543210" from country code + what was typed, or null if it is not a valid mobile number */
+function normPhone(cc, typed) {
+  let d = String(typed || '').replace(/\D/g, '');
+  if (d.length > 10 && d.startsWith(cc)) d = d.slice(cc.length);
+  d = d.replace(/^0+/, '');
+  if (cc === '91') return /^[6-9]\d{9}$/.test(d) ? `+91${d}` : null;
+  return d.length >= 6 && cc.length + d.length <= 15 ? `+${cc}${d}` : null;
+}
+const splitPhone = p => { const c = COUNTRIES.map(x => x[0]).sort((a, b) => b.length - a.length).find(x => p?.startsWith('+' + x)); return c ? [c, p.slice(c.length + 1)] : ['91', '']; };
+const showPhone = p => { const [c, n] = splitPhone(p); return n ? `+${c} ${n}` : p || ''; };
+const maskPhone = p => { const [c, n] = splitPhone(p); return n ? `+${c} ${n.slice(0, 2)}${'•'.repeat(Math.max(0, n.length - 5))}${n.slice(-3)}` : ''; };
+const phoneField = (phone = '') => { const [cc, n] = splitPhone(phone); return `<label class="field"><span>${esc(t('Mobile number'))}</span>
+  <div class="row phone-row"><select class="input" name="cc" aria-label="${esc(t('Country code'))}">${COUNTRIES.map(([c, f]) => `<option value="${c}" ${c === cc ? 'selected' : ''}>${f} +${c}</option>`).join('')}</select>
+  <input class="input" name="phone" type="tel" inputmode="tel" autocomplete="tel-national" maxlength="16" value="${esc(n)}" placeholder="98765 43210"></div></label>`; };
+
+async function pbkdfB64(secret, saltText, iter) {
+  const base = await crypto.subtle.importKey('raw', te.encode(secret), 'PBKDF2', false, ['deriveBits']);
+  return b64(await crypto.subtle.deriveBits({ name: 'PBKDF2', salt: te.encode(saltText), iterations: iter, hash: 'SHA-256' }, base, 256));
+}
+const authSecret = (phone, pw) => pbkdfB64(pw, 'home-accounts:auth:' + phone, ITER);
+const rcProof = (phone, code) => pbkdfB64(normCode(code), 'home-accounts:recovery:' + phone, 100000);
+const sha256hex = async s => [...new Uint8Array(await crypto.subtle.digest('SHA-256', te.encode(s)))].map(b => b.toString(16).padStart(2, '0')).join('');
+async function sealStr(key, obj) { const b = await seal(key, te.encode(JSON.stringify(obj))); return `${b.iv}.${b.ct}`; }
+async function openStr(key, s) { const [iv, ct] = String(s).split('.'); return JSON.parse(td.decode(await unseal(key, { iv, ct }))); }
+class UserError extends Error {}
+function accountError(e) {
+  if (e instanceof UserError) return e.message;
+  if (e?.net) return t('This needs an internet connection. Please connect and try again.');
+  if (e?.status === 429) return t('Too many tries. Please wait a few minutes and try again.');
+  return setupError(e);
+}
+/** Lines/notes/income that belong to other people in a family book: kept as one's own (keep) or removed. */
+function detachShared(d, keep) {
+  const me = d.sync?.me;
+  for (const [date, day] of Object.entries(d.ledger || {})) {
+    for (const k of Object.keys(day.lines)) {
+      if (!k.includes('@')) continue;
+      if (keep) day.lines['x_' + uid()] = day.lines[k];
+      delete day.lines[k];
+    }
+    delete day.others;
+    if (!Object.keys(day.lines).length && !day.note) delete d.ledger[date];
+  }
+  if (!keep) {
+    d.income = (d.income || []).filter(i => !i.by || i.by === me);
+    for (const p of Object.values(d.plans || {})) for (const [id, it] of Object.entries(p.items || {})) if (it.by && it.by !== me) delete p.items[id];
+  }
+  delete d.sync;
+}
+const markMine = (d, id) => {
+  for (const x of [...d.items, ...d.categories, ...d.income]) x.by = id;
+  for (const p of Object.values(d.plans || {})) for (const it of Object.values(p.items || {})) it.by = id;
+};
+
+/** Creates the account's own family book, key ring and profile, and this device's locked copy. Returns the recovery code. */
+async function finishAccount(cfg, userId, phone, password, name, curCode, existing) {
+  const raw = rand(32), code = newRecoveryCode();
+  const pw = await wrapRaw(password, raw), rc = await wrapRaw(normCode(code), raw);
+  const dataKey = await importDataKey(raw); raw.fill(0);
+  const fk = rand(32);
+  SYNC.key = await importDataKey(fk);
+  const book = await rpc('ha_create_book', { p_key_check: await sealRec({ check: 'home-accounts' }), p_name_enc: await sealRec({ n: name || showPhone(phone) }) }, cfg);
+  await rpc('ha_register', { p_phone: phone, p_pw_wrap: JSON.stringify(pw), p_rc_wrap: JSON.stringify(rc),
+    p_rc_verifier: await sha256hex(await rcProof(phone, code)), p_keyring: await sealStr(dataKey, { book, fk: b64(fk), creator: true }) }, cfg);
+  const d = existing || defaultData(name, curCode);
+  if (existing) detachShared(d, true);
+  markMine(d, userId);
+  if (name) d.settings.name = name;
+  d.account = { phone, uid: userId };
+  d.sync = { url: cfg.url, anon: cfg.anon, rt: cfg.rt, book, me: userId, role: 'owner', creator: true, name: name || '', fk: b64(fk), cursor: 0, snap: {},
+    members: { [userId]: { name, role: 'owner', status: 'active' } } };
+  fk.fill(0);
+  S.dataKey = dataKey; S.vault = { app: 'HomeAccounts', v: 2, pw, rc, acct: { phone } }; S.data = migrate(d);
+  await flush();
+  return code;
+}
+async function createAccount(phone, password, name, curCode, existing = null) {
+  const cfg = cloudCfg();
+  stopSync();
+  let j;
+  try { j = await sbFetch(cfg, '/auth/v1/signup', { email: phoneEmail(phone), password: await authSecret(phone, password), data: {} }); }
+  catch (e) {
+    if (e.code === 'user_already_exists' || /already (registered|exists)/i.test(e.message)) throw new UserError(t('This mobile number already has an account. Please log in instead.'));
+    throw e;
+  }
+  if (!j?.access_token) throw new UserError(t('The cloud is set to confirm email addresses. In Supabase, turn OFF "Confirm email" (Authentication → Sign In / Providers → Email).'));
+  const a = tokenInfo(j);
+  SYNC.at = a.at; SYNC.atExp = a.exp; cfg.rt = a.rt;
+  return finishAccount(cfg, a.uid, phone, password, name, curCode, existing);
+}
+/** Logs in on this device. Returns { code } if the account set-up had to be finished now. */
+async function logIn(phone, password) {
+  const cfg = cloudCfg();
+  stopSync();
+  let j;
+  try { j = await sbFetch(cfg, '/auth/v1/token?grant_type=password', { email: phoneEmail(phone), password: await authSecret(phone, password) }); }
+  catch (e) {
+    if (e.status === 400 || e.code === 'invalid_credentials') throw new UserError(t('The mobile number or password is not correct.'));
+    throw e;
+  }
+  const a = tokenInfo(j);
+  SYNC.at = a.at; SYNC.atExp = a.exp; cfg.rt = a.rt;
+  const prof = await rpc('ha_profile_get', {}, cfg);
+  if (!prof) return { code: await finishAccount(cfg, a.uid, phone, password, '', 'INR', null) };
+  const pw = JSON.parse(prof.pw_wrap), rc = prof.rc_wrap ? JSON.parse(prof.rc_wrap) : null;
+  let raw;
+  try { raw = await unwrapRaw(password, pw); } catch { throw new UserError(t('The mobile number or password is not correct.')); }
+  const key = await importDataKey(raw); raw.fill(0);
+  const kr = await openStr(key, prof.keyring);
+  // This account's copy already on this device? Keep it (it may hold changes not yet sent).
+  const local = readVault();
+  let data = null;
+  if (local?.acct?.phone === phone) { try { data = JSON.parse(td.decode(await unseal(key, local))); } catch { data = null; } }
+  const fresh = !data || data.sync?.book !== kr.book;
+  if (fresh) data = { settings: { name: '', cur: 'INR' }, categories: [], items: [], ledger: {}, income: [], plans: {} };
+  data.account = { phone, uid: a.uid };
+  data.sync = { ...(fresh ? { cursor: 0, snap: {}, members: {}, fresh: true } : data.sync), url: cfg.url, anon: cfg.anon, rt: cfg.rt,
+    book: kr.book, me: a.uid, role: data.sync?.role || 'owner', creator: !!kr.creator, name: data.sync?.name || '', fk: kr.fk };
+  S.dataKey = key; S.vault = { app: 'HomeAccounts', v: 2, pw, rc, acct: { phone } }; S.data = migrate(data);
+  await flush();
+  return {};
+}
+async function recoverAccount(phone, code, newPassword) {
+  const cfg = cloudCfg(), proof = await rcProof(phone, code);
+  let r;
+  try { r = await sbFetch(cfg, '/rest/v1/rpc/ha_recovery_start', { p_phone: phone, p_proof: proof }); }
+  catch (e) { if (/not correct/.test(e.message || '')) throw new UserError(t('That mobile number and recovery code do not match.')); throw e; }
+  let raw;
+  try { raw = await unwrapRaw(normCode(code), JSON.parse(r.rc_wrap)); } catch { throw new UserError(t('That mobile number and recovery code do not match.')); }
+  const pw = await wrapRaw(newPassword, raw); raw.fill(0);
+  await sbFetch(cfg, '/rest/v1/rpc/ha_recovery_finish', { p_phone: phone, p_proof: proof, p_new_auth: await authSecret(phone, newPassword), p_pw_wrap: JSON.stringify(pw) });
+  return logIn(phone, newPassword);
+}
+/** Sign out of this device: send anything left, then remove this device's copy (it stays in the cloud). */
+async function signOutDevice() {
+  if (shared() && S.dataKey) {
+    try { await syncNow({ throwErrors: true }); }
+    catch { if (!(await confirmBox(t('Some changes on this device have not reached the cloud yet (no internet). If you sign out now they will be lost. Sign out anyway?'), t('Sign out'), true))) return; }
+    try { await sbFetch(sy(), '/auth/v1/logout', {}, SYNC.at); } catch { /* offline: fine */ }
+  }
+  localStorage.removeItem(VAULT_KEY);
+  resetAttempts();
+  hardLock(t('You have signed out of this device. Log in to see your accounts again.'));
+}
 
 function showLock(msg = '') {
   lockMsg = msg;
@@ -570,38 +730,89 @@ function showLock(msg = '') {
     return;
   }
   const v = readVault();
-  if (!v) return lockSetup();
-  lockUnlock(msg);
+  if (v) return lockUnlock(msg);
+  if (!cloudReady()) return lockNoCloud();
+  lockSignup(msg);
 }
 
-function lockSetup() {
+function lockNoCloud() {
+  lockScreen = () => lockNoCloud();
+  L.innerHTML = frame(`<div class="alert warning"><span class="ico" aria-hidden="true">☁️</span><div>
+      <b>${esc(t('This app is not connected to its cloud yet'))}</b>
+      <span class="small">${esc(t('Accounts are stored in the cloud, so the person who set up this app must first add the cloud address in the file config.js (see the README, "Setting up the cloud").'))}</span></div></div>
+    <div class="links"><button class="link-btn" id="lnkRestore">${esc(t('Restore from a backup file'))}</button></div>`);
+  $('#lnkRestore').onclick = async () => { if (await restoreFromFile()) showLock(t('Backup loaded. Enter the password you used when the backup was made.')); };
+}
+
+function lockSignup(msg = '') {
+  lockScreen = () => lockSignup(msg);
   L.innerHTML = frame(`
-    <p class="sub">${esc(t("Welcome! Let's set up your private account book."))}<br>${esc(t('It stays on this device and is locked with your password.'))}</p>
+    ${msg ? `<div class="alert info"><span class="ico">ℹ️</span><div>${esc(msg)}</div></div>` : ''}
+    <button class="btn block" id="toLogin" style="margin-bottom:14px">🔑 ${esc(t('I already have an account – Log in'))}</button>
+    <h3 style="text-align:center;margin:4px 0 6px">${esc(t('Create your account'))}</h3>
+    <p class="sub">${esc(t('Your mobile number is your login. Use the same number and password to open your accounts on any phone or computer.'))}</p>
     <form id="f" autocomplete="off">
-      <label class="field"><span>${esc(t('Your name (optional)'))}</span><input class="input" name="name" maxlength="40"></label>
+      <label class="field"><span>${esc(t('Your name'))}</span><input class="input" name="name" maxlength="40" autocomplete="name"></label>
+      ${phoneField()}
       <label class="field"><span>${esc(t('Currency'))}</span><select class="input" name="cur">${curOptions('INR')}</select></label>
       <label class="field"><span>${esc(t('Create a password'))}</span><input class="input" type="password" name="p1" autocomplete="new-password"></label>
       <label class="field"><span>${esc(t('Type the same password again'))}</span><input class="input" type="password" name="p2" autocomplete="new-password"></label>
       <label class="check"><input type="checkbox" data-showpw> ${esc(t('Show password'))}</label>
       <p class="small muted">${th('Use at least 6 letters or numbers. A short phrase you will remember is best, for example **mango tree 1984**. Do not share it with anyone.')}</p>
       <div class="error-msg" id="err" role="alert"></div>
-      <button class="btn primary block">🔐 ${esc(t('Create my account book'))}</button>
+      <button class="btn primary block">🔐 ${esc(t('Create my account'))}</button>
     </form>
     <div class="links"><button class="link-btn" id="lnkRestore">${esc(t('I already have a backup file'))}</button></div>`);
   const f = $('#f'); pwToggle(f);
+  $('#toLogin').onclick = () => lockLogin();
   $('#lnkRestore').onclick = async () => { if (await restoreFromFile()) showLock(t('Backup loaded. Enter the password you used when the backup was made.')); };
   f.onsubmit = async e => {
     e.preventDefault();
-    const err = checkNewPassword(f.p1.value, f.p2.value);
+    const phone = normPhone(f.cc.value, f.phone.value);
+    const err = checkNewPassword(f.p1.value, f.p2.value) || (!phone ? t('Please enter a valid mobile number.') : '');
     $('#err').textContent = err; if (err) return;
-    await busy(f.querySelector('button.primary'), t('Setting up securely…'), async () => {
-      const raw = rand(32), code = newRecoveryCode();
-      const vault = { app: 'HomeAccounts', v: 1, pw: await wrapRaw(f.p1.value, raw), rc: await wrapRaw(normCode(code), raw) };
-      S.dataKey = await importDataKey(raw); raw.fill(0);
-      S.vault = vault;
-      S.data = defaultData(f.name.value.trim(), f.cur.value);
-      await flush();
-      showRecoveryCode(code, () => startApp());
+    await busy(f.querySelector('button.primary'), t('Creating your account…'), async () => {
+      try { const code = await createAccount(phone, f.p1.value, f.name.value.trim(), f.cur.value); showRecoveryCode(code, () => startApp()); }
+      catch (ex) { S.dataKey = null; S.data = null; $('#err').textContent = accountError(ex); }
+    });
+  };
+}
+
+function lockLogin(phone = '') {
+  lockScreen = () => lockLogin(phone);
+  L.innerHTML = frame(`
+    <h3 style="text-align:center;margin:4px 0 6px">${esc(t('Log in'))}</h3>
+    <p class="sub">${esc(t('Use the mobile number and password of your Home Accounts account.'))}</p>
+    <form id="f" autocomplete="on">
+      ${phoneField(phone)}
+      <label class="field"><span>${esc(t('Password'))}</span><input class="input" type="password" name="pw" autocomplete="current-password"></label>
+      <label class="check"><input type="checkbox" data-showpw> ${esc(t('Show password'))}</label>
+      <div class="error-msg" id="err" role="alert">${esc(waitMsg())}</div>
+      <button class="btn primary block">🔓 ${esc(t('Log in'))}</button>
+    </form>
+    <div class="links">
+      <button class="link-btn" id="lnkForgot">${esc(t('Forgot password? Use recovery code'))}</button>
+      <button class="link-btn" id="lnkSignup">${esc(t('Create a new account'))}</button>
+    </div>`);
+  const f = $('#f'); pwToggle(f);
+  $('#lnkForgot').onclick = () => lockRecover(normPhone(f.cc.value, f.phone.value) || '');
+  $('#lnkSignup').onclick = () => lockSignup();
+  f.onsubmit = async e => {
+    e.preventDefault();
+    const w = waitMsg(); if (w) { $('#err').textContent = w; return; }
+    const ph = normPhone(f.cc.value, f.phone.value);
+    if (!ph) { $('#err').textContent = t('Please enter a valid mobile number.'); return; }
+    if (!f.pw.value) { $('#err').textContent = t('Please type your password.'); return; }
+    await busy(f.querySelector('button.primary'), t('Logging in…'), async () => {
+      try {
+        const r = await logIn(ph, f.pw.value);
+        resetAttempts();
+        if (r.code) showRecoveryCode(r.code, () => startApp()); else startApp();
+      } catch (ex) {
+        if (ex instanceof UserError) failAttempt();
+        S.dataKey = null; S.data = null;
+        $('#err').textContent = waitMsg() || accountError(ex);
+      }
     });
   };
 }
@@ -620,7 +831,7 @@ function showRecoveryCode(code, onDone, inModal = false) {
     btn.onclick = () => { close?.(); onDone?.(); };
   };
   if (inModal) modal(html, wire);
-  else { L.innerHTML = frame(html); wire(L); }
+  else { lockScreen = () => showRecoveryCode(code, onDone); L.innerHTML = frame(html); wire(L); }
 }
 
 function getAttempts() { try { return JSON.parse(localStorage.getItem(ATTEMPT_KEY)) || { n: 0, until: 0 }; } catch { return { n: 0, until: 0 }; } }
@@ -638,9 +849,13 @@ function waitMsg() {
     : t('Too many wrong tries. Please wait {n} seconds and try again.', { n: s });
 }
 
+/** This device already has a locked copy: open it with the password (works without internet). */
 function lockUnlock(msg = '') {
+  lockScreen = () => lockUnlock(msg);
+  const v = readVault(), phone = v?.acct?.phone;
   L.innerHTML = frame(`
     <p class="sub">${esc(t('Welcome back! Enter your password to open your accounts.'))}</p>
+    ${phone ? `<p class="sub" style="margin-top:-12px">👤 ${esc(maskPhone(phone))}</p>` : ''}
     ${msg ? `<div class="alert info"><span class="ico">ℹ️</span><div>${esc(msg)}</div></div>` : ''}
     <form id="f">
       <label class="field"><span>${esc(t('Password'))}</span><input class="input" type="password" name="pw" autocomplete="current-password" autofocus></label>
@@ -650,21 +865,31 @@ function lockUnlock(msg = '') {
     </form>
     <div class="links">
       <button class="link-btn" id="lnkForgot">${esc(t('Forgot password? Use recovery code'))}</button>
+      ${phone && cloudReady() ? `<button class="link-btn" id="lnkOther">${esc(t('Log in with a different account'))}</button>` : ''}
       <button class="link-btn" id="lnkRestore">${esc(t('Restore from a backup file'))}</button>
     </div>`);
   const f = $('#f'); pwToggle(f);
   if (!isTouch()) f.pw.focus();
-  $('#lnkForgot').onclick = lockRecover;
+  $('#lnkForgot').onclick = () => lockRecover(phone || '');
+  $('#lnkOther')?.addEventListener('click', async () => {
+    if (await confirmBox(t('This removes the accounts of {p} from this device (they stay safe in the cloud if they were synced). Continue?', { p: maskPhone(phone) }), t('Yes, continue'), true)) {
+      localStorage.removeItem(VAULT_KEY); resetAttempts(); lockLogin();
+    }
+  });
   $('#lnkRestore').onclick = async () => { if (await restoreFromFile()) showLock(t('Backup loaded. Enter the password you used when the backup was made.')); };
   f.onsubmit = async e => {
     e.preventDefault();
     const w = waitMsg(); if (w) { $('#err').textContent = w; return; }
     if (!f.pw.value) { $('#err').textContent = t('Please type your password.'); return; }
     await busy(f.querySelector('button.primary'), t('Opening…'), async () => {
-      const v = readVault();
       let raw;
       try { raw = await unwrapRaw(f.pw.value, v.pw); }
       catch {
+        // The password may have been changed on another device: check with the cloud.
+        if (phone && cloudReady()) {
+          try { const r = await logIn(phone, f.pw.value); resetAttempts(); if (r.code) showRecoveryCode(r.code, () => startApp()); else startApp(); return; }
+          catch (ex) { S.dataKey = null; S.data = null; if (!(ex instanceof UserError) && ex?.net === undefined) { /* fall through to the usual message */ } }
+        }
         const a = failAttempt();
         $('#err').textContent = waitMsg() || t('That password is not correct. Check that Caps Lock is off, tick "Show password" to see what you typed, and try again.')
           + (a.n >= 3 ? ' ' + t('({n} tries left before you must wait.)', { n: Math.max(0, 5 - a.n) }) : '');
@@ -672,15 +897,20 @@ function lockUnlock(msg = '') {
         return;
       }
       resetAttempts();
-      await enterWithRaw(raw, v);
+      await enterWithRaw(raw, v, f.pw.value);
     });
   };
 }
 
-function lockRecover() {
+function lockRecover(phone = '') {
+  lockScreen = () => lockRecover(phone);
+  const v = readVault();
+  const legacy = v && !v.acct; // an older copy without an account: recover it on this device only
   L.innerHTML = frame(`
-    <p class="sub">${esc(t('Type the recovery code you wrote down when you set up the app, then choose a new password.'))}</p>
+    <p class="sub">${esc(legacy ? t('Type the recovery code you wrote down when you set up the app, then choose a new password.')
+      : t('Type your mobile number and the recovery code you wrote down when you created your account, then choose a new password.'))}</p>
     <form id="f" autocomplete="off">
+      ${legacy ? '' : phoneField(phone)}
       <label class="field"><span>${esc(t('Recovery code'))}</span><input class="input" name="code" placeholder="XXXX-XXXX-XXXX-XXXX-XXXX" style="text-transform:uppercase" autocapitalize="characters"></label>
       <label class="field"><span>${esc(t('New password'))}</span><input class="input" type="password" name="p1" autocomplete="new-password"></label>
       <label class="field"><span>${esc(t('Type the new password again'))}</span><input class="input" type="password" name="p2" autocomplete="new-password"></label>
@@ -690,22 +920,62 @@ function lockRecover() {
     </form>
     <div class="links"><button class="link-btn" id="lnkBack">← ${esc(t('Back'))}</button></div>`);
   const f = $('#f'); pwToggle(f);
-  $('#lnkBack').onclick = () => lockUnlock();
+  $('#lnkBack').onclick = () => showLock();
   f.onsubmit = async e => {
     e.preventDefault();
     const w = waitMsg(); if (w) { $('#err').textContent = w; return; }
     const err = checkNewPassword(f.p1.value, f.p2.value);
     if (err) { $('#err').textContent = err; return; }
     await busy(f.querySelector('button.primary'), t('Checking…'), async () => {
-      const v = readVault();
-      let raw;
-      try { if (!v.rc) throw 0; raw = await unwrapRaw(normCode(f.code.value), v.rc); }
-      catch { failAttempt(); $('#err').textContent = waitMsg() || t('That recovery code is not correct. Please check it and try again.'); return; }
-      resetAttempts();
-      v.pw = await wrapRaw(f.p1.value, raw);
-      localStorage.setItem(VAULT_KEY, JSON.stringify(v));
-      await enterWithRaw(raw, v);
-      toast(t('✅ Password changed'), t('Use your new password from now on.'));
+      if (legacy) {
+        let raw;
+        try { if (!v.rc) throw 0; raw = await unwrapRaw(normCode(f.code.value), v.rc); }
+        catch { failAttempt(); $('#err').textContent = waitMsg() || t('That recovery code is not correct. Please check it and try again.'); return; }
+        resetAttempts();
+        v.pw = await wrapRaw(f.p1.value, raw);
+        localStorage.setItem(VAULT_KEY, JSON.stringify(v));
+        await enterWithRaw(raw, v, f.p1.value);
+        toast(t('✅ Password changed'), t('Use your new password from now on.'));
+        return;
+      }
+      const ph = normPhone(f.cc.value, f.phone.value);
+      if (!ph) { $('#err').textContent = t('Please enter a valid mobile number.'); return; }
+      try {
+        const r = await recoverAccount(ph, f.code.value, f.p1.value);
+        resetAttempts();
+        const go = () => { startApp(); toast(t('✅ Password changed'), t('Use your new password from now on, on all your devices.')); };
+        if (r.code) showRecoveryCode(r.code, go); else go();
+      } catch (ex) {
+        if (ex instanceof UserError) failAttempt();
+        S.dataKey = null; S.data = null;
+        $('#err').textContent = waitMsg() || accountError(ex);
+      }
+    });
+  };
+}
+
+/** An older copy (made before accounts existed) must be moved into an account once. */
+function lockMigrate(password) {
+  lockScreen = () => lockMigrate(password);
+  L.innerHTML = frame(`
+    <h3 style="text-align:center;margin:4px 0 6px">${esc(t('Create your account'))}</h3>
+    <p class="sub">${esc(t('Home Accounts now uses accounts, so you can open your accounts on any device. Add your mobile number once – everything you already recorded is kept and moved into your account.'))}</p>
+    <form id="f" autocomplete="off">
+      <label class="field"><span>${esc(t('Your name'))}</span><input class="input" name="name" maxlength="40" value="${esc(S.data.settings.name || '')}"></label>
+      ${phoneField()}
+      <p class="small muted">${esc(t('Your password stays the same.'))}</p>
+      <div class="error-msg" id="err" role="alert"></div>
+      <button class="btn primary block">🔐 ${esc(t('Create my account'))}</button>
+    </form>`);
+  const f = $('#f');
+  f.onsubmit = async e => {
+    e.preventDefault();
+    const phone = normPhone(f.cc.value, f.phone.value);
+    if (!phone) { $('#err').textContent = t('Please enter a valid mobile number.'); return; }
+    await busy(f.querySelector('button.primary'), t('Creating your account…'), async () => {
+      const keep = { key: S.dataKey, vault: S.vault, data: S.data };
+      try { const code = await createAccount(phone, password, f.name.value.trim(), keep.data.settings.cur, keep.data); showRecoveryCode(code, () => startApp()); }
+      catch (ex) { Object.assign(S, { dataKey: keep.key, vault: keep.vault, data: JSON.parse(JSON.stringify(keep.data)) }); $('#err').textContent = accountError(ex); }
     });
   };
 }
@@ -722,12 +992,13 @@ async function restoreFromFile() {
   return true;
 }
 
-async function enterWithRaw(raw, v) {
+async function enterWithRaw(raw, v, password) {
   const key = await importDataKey(raw); raw.fill(0);
   let data;
   try { data = JSON.parse(td.decode(await unseal(key, v))); }
   catch { infoBox(t('Could not open'), t('The saved data seems damaged. Please restore from a backup file.')); return; }
   S.dataKey = key; S.vault = v; S.data = migrate(data);
+  if (!S.data.account && cloudReady() && password) return lockMigrate(password); // accounts are required
   startApp();
 }
 
@@ -1461,9 +1732,12 @@ function viewSettings() {
   <div class="card"><h3>🌐 ${esc(t('Language'))} / மொழி</h3>${langSwitch()}
     <p class="small muted" style="margin:8px 0 0">${esc(t('Item names you typed yourself stay as you typed them.'))}</p></div>
 
-  <div class="card"><h3>👤 ${esc(t('About you'))}</h3>
+  <div class="card" id="accountCard"><h3>👤 ${esc(t('Your account'))}</h3>
+    ${S.data.account ? `<p class="small" style="margin-top:0">${th('Mobile number: **{p}**', { p: esc(showPhone(S.data.account.phone)) })}<br>
+      <span class="muted">${esc(t('Log in with this number and your password on any phone or computer to see the same accounts.'))}</span></p>` : ''}
     <label class="field"><span>${esc(t('Your name'))}</span><input class="input" data-set="name" value="${esc(s.name)}" maxlength="40"></label>
-    <label class="field" style="margin:0"><span>${esc(t('Currency'))}</span><select class="input" data-set="cur" ${canManage() ? '' : 'disabled'}>${curOptions(s.cur)}</select></label>
+    <label class="field"><span>${esc(t('Currency'))}</span><select class="input" data-set="cur" ${canManage() ? '' : 'disabled'}>${curOptions(s.cur)}</select></label>
+    ${S.data.account ? `<button class="btn block" data-act="signOut">🚪 ${esc(t('Sign out of this device'))}</button>` : ''}
   </div>
   </div>
 
@@ -1534,6 +1808,7 @@ function viewSettings() {
   <div class="card"><h3>⚠️ ${esc(t('Erase'))}</h3>
     <p class="small muted">${esc(t('Removes all accounts from this device permanently. Make a backup first if you may need them again.'))}</p>
     <button class="btn danger block" data-act="erase">🗑️ ${esc(t('Erase everything on this device'))}</button>
+    ${S.data.account ? `<button class="btn danger block" data-act="deleteAccount" style="margin-top:10px">❌ ${esc(t('Delete my account'))}</button>` : ''}
   </div>
   <p class="small muted" style="text-align:center">${esc(t('Home Accounts · works offline · your data stays with you'))}</p>`;
 }
@@ -1614,9 +1889,16 @@ function changePwModal() {
       await busy(f.querySelector('button.primary'), t('Please wait…'), async () => {
         let raw;
         try { raw = await unwrapRaw(f.old.value, S.vault.pw); } catch { $('#merr', box).textContent = t('The current password is wrong.'); return; }
-        S.vault.pw = await wrapRaw(f.p1.value, raw); raw.fill(0);
+        const pw = await wrapRaw(f.p1.value, raw); raw.fill(0);
+        if (S.data.account) { // change it for the account too, so every device uses the new password
+          try {
+            await authed('/auth/v1/user', { password: await authSecret(S.data.account.phone, f.p1.value) }, 'PUT');
+            await rpc('ha_profile_update', { p_pw_wrap: JSON.stringify(pw) });
+          } catch (e) { $('#merr', box).textContent = accountError(e); return; }
+        }
+        S.vault.pw = pw;
         await flush(); close();
-        toast(t('✅ Password changed'), t('Old backups still open with the old password. Make a new backup now.'));
+        toast(t('✅ Password changed'), S.data.account ? t('Use the new password on all your devices from now on.') : t('Old backups still open with the old password. Make a new backup now.'));
       });
     };
   });
@@ -1633,7 +1915,12 @@ function newCodeModal() {
         let raw;
         try { raw = await unwrapRaw(f.pw.value, S.vault.pw); } catch { $('#merr', box).textContent = t('Wrong password.'); return; }
         const code = newRecoveryCode();
-        S.vault.rc = await wrapRaw(normCode(code), raw); raw.fill(0);
+        const rc = await wrapRaw(normCode(code), raw); raw.fill(0);
+        if (S.data.account) {
+          try { await rpc('ha_profile_update', { p_rc_wrap: JSON.stringify(rc), p_rc_verifier: await sha256hex(await rcProof(S.data.account.phone, code)) }); }
+          catch (e) { $('#merr', box).textContent = accountError(e); return; }
+        }
+        S.vault.rc = rc;
         await flush(); close();
         showRecoveryCode(code, () => toast(t('✅ New recovery code saved')), true);
       });
@@ -1661,8 +1948,30 @@ async function shareBackup() {
 async function restoreInApp() {
   if (await restoreFromFile()) hardLock(t('Backup restored. Enter the password that was used when the backup was made.'));
 }
+function deleteAccountModal() {
+  modal(`<h3>🗑️ ${esc(t('Delete my account?'))}</h3>
+    <p>${th('Your account, your sign-in and everything you recorded will be **permanently deleted** from the cloud and from this device. A family book you started is deleted for everyone in it. This cannot be undone.')}</p>
+    <p class="small muted">${esc(t('Tip: make a backup first if you may want your accounts again.'))}</p>
+    <form id="mf"><label class="field"><span>${th('Type **DELETE** to confirm')}</span><input class="input" name="c" autocomplete="off" autocapitalize="characters"></label>
+    <div class="error-msg" id="merr"></div>
+    <div class="actions"><button type="button" class="btn" data-close>${esc(t('Cancel'))}</button><button class="btn danger">${esc(t('Delete my account'))}</button></div></form>`, (box, close) => {
+    const f = $('#mf', box);
+    f.onsubmit = async ev => {
+      ev.preventDefault();
+      if (f.c.value.trim().toUpperCase() !== 'DELETE') { f.c.focus(); return; }
+      await busy(f.querySelector('button.danger'), t('Please wait…'), async () => {
+        try { await rpc('ha_delete_account', {}); } catch (e) { $('#merr', box).textContent = accountError(e); return; }
+        close();
+        localStorage.removeItem(VAULT_KEY); localStorage.removeItem(ATTEMPT_KEY);
+        writePrefs({ privacy: false });
+        hardLock(t('Your account has been deleted.'));
+      });
+    };
+  });
+}
 async function eraseAll() {
   modal(`<h3>🗑️ ${esc(t('Erase everything?'))}</h3><p>${th('All income, expenses and items on this device will be **permanently deleted**. This cannot be undone.')}</p>
+    ${S.data.account ? `<p class="small">${esc(t('Your account in the cloud is not affected – to remove that too, use "Delete my account".'))}</p>` : ''}
     <form id="mf"><label class="field"><span>${th('Type **DELETE** to confirm')}</span><input class="input" name="c" autocomplete="off" autocapitalize="characters"></label>
     <div class="actions"><button type="button" class="btn" data-close>${esc(t('Cancel'))}</button><button class="btn danger">${esc(t('Erase'))}</button></div></form>`, (box, close) => {
     const f = $('#mf', box);
@@ -2551,28 +2860,27 @@ function applyRecord(id, author, deleted, v) {
 
 // ---- Talking to Supabase (auth + database functions)
 const cleanUrl = u => String(u || '').trim().replace(/\/+$/, '').replace(/\/rest\/v1$/, '');
-async function sbFetch(cfg, path, body, token) {
+async function sbFetch(cfg, path, body, token, method = 'POST') {
   let r;
   try {
     r = await fetch(cleanUrl(cfg.url) + path, {
-      method: 'POST', body: JSON.stringify(body ?? {}),
+      method, body: JSON.stringify(body ?? {}),
       headers: { apikey: cfg.anon, Authorization: `Bearer ${token || cfg.anon}`, 'Content-Type': 'application/json' },
     });
   } catch { const e = new Error(t('No internet connection.')); e.net = true; throw e; }
   let j = null; try { j = await r.json(); } catch { /* empty body */ }
   if (!r.ok) {
     const e = new Error(j?.message || j?.msg || j?.error_description || `HTTP ${r.status}`);
-    e.status = r.status; e.code = j?.code || j?.error_code; throw e;
+    e.status = r.status; e.code = j?.error_code || (typeof j?.code === 'string' ? j.code : undefined); throw e;
   }
   return j;
 }
 const tokenInfo = j => ({ at: j.access_token, rt: j.refresh_token, exp: j.expires_at ? j.expires_at * 1000 : Date.now() + (j.expires_in || 3600) * 1000, uid: j.user?.id });
-async function signUpAnon(cfg) {
-  const j = await sbFetch(cfg, '/auth/v1/signup', { data: {} });
-  if (!j?.access_token || !j.user?.id) throw new Error(t('Could not sign in to the family cloud.'));
-  const a = tokenInfo(j);
-  SYNC.at = a.at; SYNC.atExp = a.exp; cfg.rt = a.rt;
-  return a;
+/** Signed-in call to the auth service (e.g. change the sign-in password). */
+async function authed(path, body, method = 'POST') {
+  const cfg = sy();
+  if (!SYNC.at || Date.now() > SYNC.atExp - 60e3) await refreshToken(cfg);
+  return sbFetch(cfg, path, body, SYNC.at, method);
 }
 function refreshToken(cfg) {
   return (SYNC.refreshing ||= (async () => {
@@ -2665,7 +2973,23 @@ async function refreshMembers() {
   for (const r of rows) { const n = r.name_enc ? await openRec(r.name_enc) : null; mem[r.user_id] = { name: n?.n || '', role: r.role, status: r.status }; }
   if (sy() !== s) return;
   s.members = mem; SYNC.membersAt = Date.now();
-  if (mem[s.me] && mem[s.me].role !== s.role) { s.role = mem[s.me].role; softRender(); }
+  const mine = mem[s.me];
+  if (mine && mine.role !== s.role) { s.role = mine.role; softRender(); }
+  if (mine?.name) { s.name ||= mine.name; S.data.settings.name ||= mine.name; } // first log-in on a new device
+}
+/** Did this account join or leave a family on another device? Then follow it here: start again from the cloud. */
+async function checkKeyring() {
+  const s = sy(); if (!S.data.account) return false;
+  const prof = await rpc('ha_profile_get', {});
+  if (!prof?.keyring || sy() !== s) return false;
+  const kr = await openStr(S.dataKey, prof.keyring);
+  if (kr.book === s.book) return false;
+  const d = S.data;
+  Object.assign(d, { items: [], categories: [], ledger: {}, income: [], plans: {} });
+  migrate(d);
+  Object.assign(s, { book: kr.book, fk: kr.fk, creator: !!kr.creator, role: 'member', cursor: 0, snap: {}, members: {}, fresh: true });
+  SYNC.key = await importDataKey(unb64(kr.fk));
+  return true;
 }
 async function syncNow(opts = {}) {
   if (!shared() || !S.dataKey) return;
@@ -2674,16 +2998,25 @@ async function syncNow(opts = {}) {
   const s = sy();
   try {
     if (!SYNC.key) SYNC.key = await importDataKey(unb64(s.fk));
-    let changed = await syncPull(!!opts.force);
+    const due = opts.members || Date.now() - SYNC.membersAt > 60e3;
+    if (due && !opts.force && !s.fresh) await checkKeyring();
+    let changed = await syncPull(!!opts.force || !!s.fresh);
+    if (s.fresh) { delete s.fresh; changed = true; opts.members = true; }
     if (opts.afterPull) changed = opts.afterPull() || changed;
     const rejected = await syncPush();
-    if (opts.members || Date.now() - SYNC.membersAt > 60e3) await refreshMembers();
+    if (due || opts.members) await refreshMembers();
     s.lastSync = new Date().toISOString();
     persist(true);
     setSyncStatus('ok');
     if (changed || rejected) softRender();
   } catch (e) {
     if (e.message === 'stopped') return;
+    if ((e.code === '42501' || e.status === 403) && S.data?.account && !opts.retried) {
+      // no longer in this book: maybe this account moved to another family book on another device
+      let moved = false;
+      try { moved = await checkKeyring(); } catch { /* ignore */ }
+      if (moved) { SYNC.busy = false; return syncNow({ ...opts, retried: true }); }
+    }
     if (e.code === '42501' || e.status === 403) setSyncStatus('removed', e.message);
     else if (e.auth) setSyncStatus('signedout', e.message);
     else if (e.net) setSyncStatus('offline');
@@ -2696,14 +3029,16 @@ async function syncNow(opts = {}) {
 }
 function syncSoon() { if (!shared() || !S.dataKey) return; clearTimeout(SYNC.soon); SYNC.soon = setTimeout(() => syncNow(), 1500); }
 function startSync() {
-  stopSync();
+  stopSync(true); // keep a sign-in that is still valid
   if (!shared()) return;
   SYNC.timer = setInterval(() => { if (!document.hidden) syncNow(); }, 15000);
   syncNow({ members: true });
 }
-function stopSync() {
+/** keepAuth: keep the current sign-in (used while switching family books; not when locking). */
+function stopSync(keepAuth = false) {
   clearInterval(SYNC.timer); clearTimeout(SYNC.soon);
-  Object.assign(SYNC, { key: null, at: null, atExp: 0, timer: null, soon: null, busy: false, again: false, status: '', err: '', membersAt: 0, deniedShown: false, refreshing: null });
+  const auth = keepAuth ? { at: SYNC.at, atExp: SYNC.atExp } : { at: null, atExp: 0 };
+  Object.assign(SYNC, { key: null, timer: null, soon: null, busy: false, again: false, status: '', err: '', membersAt: 0, deniedShown: false, refreshing: null }, auth);
   paintSyncBtn();
 }
 document.addEventListener('visibilitychange', () => { if (!document.hidden && shared() && S.dataKey) syncNow(); });
@@ -2742,20 +3077,7 @@ function softRender() {
 }
 $('#view').addEventListener('focusout', () => { setTimeout(() => { if (SYNC.pendingRender) softRender(); }, 50); });
 
-// ---- Setting up, inviting, joining, leaving
-async function enableSharing(cfg, name) {
-  const a = await signUpAnon(cfg);
-  const fk = rand(32);
-  SYNC.key = await importDataKey(fk);
-  const book = await rpc('ha_create_book', { p_key_check: await sealRec({ check: 'home-accounts' }), p_name_enc: await sealRec({ n: name }) }, cfg);
-  const d = S.data;
-  for (const x of [...d.items, ...d.categories, ...d.income]) x.by = a.uid;
-  d.sync = { url: cleanUrl(cfg.url), anon: cfg.anon, rt: cfg.rt, book, me: a.uid, role: 'owner', creator: true, name, fk: b64(fk), cursor: 0, snap: {},
-    members: { [a.uid]: { name, role: 'owner', status: 'active' } } };
-  fk.fill(0);
-  persist(true);
-  startSync(); // sends everything to the family cloud
-}
+// ---- Families: inviting, joining, leaving (every account always syncs to one family book – at first its own)
 function parseInvite(text) {
   const m = String(text || '').match(/HA1\.([A-Za-z0-9_-]{20,})/);
   if (!m) return null;
@@ -2777,66 +3099,81 @@ function remapAfterJoin(oldItems) {
   }
   return changed;
 }
+/** Join someone's family book. My own entries move into it; the family's item list, budgets and currency are used. */
 async function joinFamily(inv, name) {
-  const cfg = { url: cleanUrl(inv.u), anon: inv.k };
-  const a = await signUpAnon(cfg);
+  const s = sy();
+  if (!s || !S.data.account) throw new UserError(t('Please create your account first.'));
+  if (cleanUrl(inv.u) !== cleanUrl(s.url)) throw new UserError(t('This invite belongs to a different Home Accounts cloud.'));
+  stopSync(true);
   SYNC.key = await importDataKey(unb64(inv.f));
-  const j = await rpc('ha_join', { p_code: inv.c, p_name_enc: await sealRec({ n: name }) }, cfg);
+  const j = await rpc('ha_join', { p_code: inv.c, p_name_enc: await sealRec({ n: name }) });
   const chk = await openRec(j.key_check);
-  if (chk?.check !== 'home-accounts') throw new Error(t('This invite is damaged. Please ask for a new one.'));
+  if (chk?.check !== 'home-accounts') throw new UserError(t('This invite is damaged. Please ask for a new one.'));
+  const oldBook = s.book, wasAlone = isCreator() && Object.values(s.members || {}).filter(m => m.status === 'active').length <= 1;
+  // remember the new family in this account's key ring, so the account's other devices follow
+  await rpc('ha_profile_update', { p_keyring: await sealStr(S.dataKey, { book: j.book_id, fk: inv.f, creator: false }) });
   const d = S.data, oldItems = d.items;
-  // Keep my own expenses and income; use the family's item list, types of expense and settings.
+  detachShared(d, true); d.sync = s;
   d.items = []; d.categories = d.categories.filter(c => c.id === 'other');
-  for (const i of d.income) i.by = a.uid;
-  d.sync = { url: cfg.url, anon: cfg.anon, rt: cfg.rt, book: j.book_id, me: a.uid, role: j.role, creator: false, name, fk: inv.f, cursor: 0, snap: {}, members: {} };
+  for (const p of Object.values(d.plans)) Object.assign(p, { income: 0, cats: {}, note: '' }); // the family's month plan is used
+  markMine(d, s.me);
+  Object.assign(s, { book: j.book_id, role: j.role, creator: false, name, fk: inv.f, cursor: 0, snap: {}, members: {} });
+  d.settings.name = name;
   persist(true);
-  stopSync();
+  stopSync(true);
   await syncNow({ force: true, members: true, throwErrors: true, afterPull: () => remapAfterJoin(oldItems) });
   SYNC.timer = setInterval(() => { if (!document.hidden) syncNow(); }, 15000);
+  if (wasAlone && oldBook) rpc('ha_delete_book', { p_book: oldBook }).catch(() => {}); // my old, now empty book
 }
-/** Stop sharing on this device. A member also removes the family's entries from this device. */
+/** Start (again) a family book of my own – after leaving or being removed from a family. My own entries come along. */
+async function startOwnBook() {
+  const s = sy(), d = S.data, me = s.me;
+  stopSync(true);
+  detachShared(d, false); d.sync = s;
+  markMine(d, me);
+  const fk = rand(32);
+  SYNC.key = await importDataKey(fk);
+  const name = s.name || d.settings.name || '';
+  const book = await rpc('ha_create_book', { p_key_check: await sealRec({ check: 'home-accounts' }), p_name_enc: await sealRec({ n: name || showPhone(d.account.phone) }) });
+  await rpc('ha_profile_update', { p_keyring: await sealStr(S.dataKey, { book, fk: b64(fk), creator: true }) });
+  Object.assign(s, { book, fk: b64(fk), role: 'owner', creator: true, cursor: 0, snap: {}, members: { [me]: { name, role: 'owner', status: 'active' } } });
+  fk.fill(0);
+  persist(true); startSync(); render(); updateBadge();
+}
+/** Older copies only (before accounts): stop syncing on this device. */
 function dropSharing(keepFamilyEntries) {
-  const d = S.data, me = myId();
-  for (const [date, day] of Object.entries(d.ledger)) {
-    for (const k of Object.keys(day.lines)) {
-      if (!k.includes('@')) continue;
-      if (keepFamilyEntries) { day.lines['x_' + uid()] = day.lines[k]; }
-      delete day.lines[k];
-    }
-    delete day.others;
-    cleanupDay(date);
-  }
-  if (!keepFamilyEntries) d.income = d.income.filter(i => !i.by || i.by === me);
-  for (const x of [...d.items, ...d.categories, ...d.income]) delete x.by;
+  const d = S.data;
   stopSync();
+  detachShared(d, keepFamilyEntries);
+  for (const x of [...d.items, ...d.categories, ...d.income]) delete x.by;
   d.sync = null;
   persist(true); render(); updateBadge();
 }
 
 function familyCard() {
   const s = sy();
-  if (!s) return `<div class="card" id="familyCard"><h3>👨‍👩‍👧 ${esc(t('Family sharing & your devices'))}</h3>
+  if (!s) return `<div class="card" id="familyCard"><h3>👨‍👩‍👧 ${esc(t('Family sharing'))}</h3>
     <p class="small">${esc(t('Share this account book with your family. Everyone adds their own daily expenses from their own phone, and the family totals, budget and warnings include everyone.'))}</p>
-    <p class="small">📱💻 ${esc(t('The same way, you can use your accounts on several of your own devices (phone, tablet, computer) and keep them all up to date.'))}</p>
-    <div class="alert good"><span class="ico">🛡️</span><div class="small">${th('Entries are **encrypted on each phone** before they go to the family cloud. The cloud stores only scrambled text that it cannot read.')}</div></div>
-    <div class="grid-2"><button class="btn primary" data-act="familySetup">➕ ${esc(t('Start a family book'))}</button>
-      <button class="btn" data-act="familyJoin">🔗 ${esc(t('Join a family / link this device'))}</button></div></div>`;
+    <div class="alert info"><span class="ico">☁️</span><div class="small">${esc(cloudReady() ? t('Family sharing needs an account. Lock the app and open it again to create your account.') : t('This app is not connected to its cloud yet. Family sharing and logging in on other devices will be available once it is.'))}</div></div></div>`;
   const people = Object.entries(s.members || {}).filter(([, m]) => m.status === 'active');
   const problem = ['removed', 'signedout'].includes(SYNC.status);
+  const creator = isCreator(), alone = people.length <= 1;
   return `<div class="card" id="familyCard"><h3>👨‍👩‍👧 ${esc(t('Family sharing'))}</h3>
     <p class="small" style="margin-top:0"><span id="syncLine">${esc(syncStatusText())}</span></p>
-    <p class="small muted">${th('You: **{n}** – {r}', { n: esc(s.name || t('You')), r: esc(roleLabel(s.role)) })}</p>
-    ${problem ? `<div class="alert danger"><span class="ico">⚠️</span><div class="small">${esc(syncStatusText())}<div><button class="btn sm" data-act="familyDrop" style="margin-top:8px">${esc(t('Stop syncing on this device'))}</button></div></div></div>` : ''}
+    ${problem ? `<div class="alert danger"><span class="ico">⚠️</span><div class="small">${esc(syncStatusText())}<div><button class="btn sm" data-act="familyDrop" style="margin-top:8px">${esc(S.data.account ? t('Continue with my own account book') : t('Stop syncing on this device'))}</button></div></div></div>` : ''}
+    ${alone ? `<p class="small">${esc(t('Share this account book with your family. Everyone adds their own daily expenses from their own phone, and the family totals, budget and warnings include everyone.'))}</p>
+      <div class="alert good"><span class="ico">🛡️</span><div class="small">${th('Entries are **encrypted on each phone** before they go to the family cloud. The cloud stores only scrambled text that it cannot read.')}</div></div>` : ''}
     <div class="small" style="font-weight:700;margin:8px 0 4px">${esc(t('Family members'))} (${people.length})</div>
-    ${people.map(([id, m]) => { const dev = m.role === 'owner' && id !== s.me && people.some(([pid, pm]) => pid !== id && pm.role === 'owner' && pm.name === m.name); return `<div class="list-row"><span class="emo" aria-hidden="true">${dev ? '📱' : m.role === 'owner' ? '👑' : '👤'}</span>
-      <div class="main"><div class="t">${esc(id === s.me ? t('{n} (you, this device)', { n: m.name || t('You') }) : m.name || t('Family member'))}</div><div class="small muted">${esc(dev ? t('Your other device') : roleLabel(m.role))}</div></div>
-      ${s.role === 'owner' && id !== s.me ? `<button class="btn sm" data-act="familyMember" data-id="${esc(id)}" aria-label="${esc(t('Change'))}">✎</button>` : ''}</div>`; }).join('')}
+    ${people.map(([id, m]) => `<div class="list-row"><span class="emo" aria-hidden="true">${m.role === 'owner' ? '👑' : '👤'}</span>
+      <div class="main"><div class="t">${esc(id === s.me ? t('{n} (you)', { n: m.name || t('You') }) : m.name || t('Family member'))}</div><div class="small muted">${esc(roleLabel(m.role))}</div></div>
+      ${s.role === 'owner' && id !== s.me ? `<button class="btn sm" data-act="familyMember" data-id="${esc(id)}" aria-label="${esc(t('Change'))}">✎</button>` : ''}</div>`).join('')}
     <div class="grid-2" style="margin-top:12px">
-      ${s.role === 'owner' ? `<button class="btn primary" data-act="familyInvite">➕ ${esc(t('Invite a family member'))}</button>
-      <button class="btn" data-act="familyDevice">📱 ${esc(t('Link my other device'))}</button>` : ''}
+      ${s.role === 'owner' ? `<button class="btn primary" data-act="familyInvite">➕ ${esc(t('Invite a family member'))}</button>` : ''}
+      ${creator && alone ? `<button class="btn" data-act="familyJoin">🔗 ${esc(t('Join another family'))}</button>` : ''}
       <button class="btn" data-act="familySync">🔄 ${esc(t('Sync now'))}</button>
     </div>
-    <button class="btn danger block" data-act="familyLeave" style="margin-top:10px">${esc(isCreator() ? t('Stop sharing (delete the family book from the cloud)') : s.role === 'owner' ? t('Unlink this device') : t('Leave the family book'))}</button>
+    ${creator && !alone ? `<button class="btn danger block" data-act="familyLeave" style="margin-top:10px">${esc(t('Stop sharing with everyone'))}</button>` : ''}
+    ${!creator ? `<button class="btn danger block" data-act="familyLeave" style="margin-top:10px">${esc(t('Leave the family book'))}</button>` : ''}
   </div>`;
 }
 function byPersonCard(mk, st) {
@@ -2853,33 +3190,6 @@ function byPersonCard(mk, st) {
       : `<div class="empty">${esc(t('No expenses recorded in this month.'))}</div>`}</div>`;
 }
 
-function familySetupModal() {
-  modal(`<h3>👨‍👩‍👧 ${esc(t('Start a family book'))}</h3>
-    <p class="small">${th('You need a free **Supabase** project (one time, about 10 minutes). The steps are in the README file, section **Family sharing**.')}</p>
-    <form id="mf" autocomplete="off">
-      <label class="field"><span>${esc(t('Project URL'))}</span><input class="input" name="url" placeholder="https://xxxxxxxx.supabase.co" inputmode="url" autocapitalize="off" spellcheck="false"></label>
-      <label class="field"><span>${esc(t('Publishable (anon) key'))}</span><input class="input" name="key" placeholder="sb_publishable_… / eyJ…" autocapitalize="off" spellcheck="false"></label>
-      <label class="field"><span>${esc(t('Your name (as your family will see it)'))}</span><input class="input" name="name" maxlength="30" value="${esc(S.data.settings.name)}"></label>
-      <div class="error-msg" id="merr"></div>
-      <div class="actions"><button type="button" class="btn" data-close>${esc(t('Cancel'))}</button><button class="btn primary">${esc(t('Start sharing'))}</button></div>
-    </form>`, (box, close) => {
-    const f = $('#mf', box);
-    f.onsubmit = async ev => {
-      ev.preventDefault();
-      const url = cleanUrl(f.url.value), key = f.key.value.trim(), name = f.name.value.trim();
-      if (!/^https:\/\/[a-z0-9-]+\.supabase\.(co|in)$/i.test(url) && !/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(url)) { $('#merr', box).textContent = t('Please enter the Project URL, like https://xxxxxxxx.supabase.co'); return; }
-      if (key.length < 20) { $('#merr', box).textContent = t('Please paste the publishable (anon) key.'); return; }
-      if (!name) { $('#merr', box).textContent = t('Please enter your name.'); return; }
-      await busy(f.querySelector('button.primary'), t('Connecting…'), async () => {
-        try { await enableSharing({ url, anon: key }, name); }
-        catch (e) { stopSync(); S.data.sync = null; $('#merr', box).textContent = setupError(e); return; }
-        close(); render();
-        toast(t('✅ Family sharing is on'), t('Now invite your family members.'));
-        inviteModal();
-      });
-    };
-  });
-}
 function inviteModal(opts = {}) {
   const device = !!opts.device;
   modal(`<h3>${device ? '📱 ' + esc(t('Link my other device')) : '➕ ' + esc(t('Invite a family member'))}</h3>
@@ -2921,7 +3231,9 @@ function inviteModal(opts = {}) {
   });
 }
 function joinModal(prefill = '') {
-  if (shared()) return infoBox(t('Already sharing'), t('This device is already part of a family book. Leave it first to join another.'));
+  // An account may join another family while it is alone in its own book; otherwise it must leave first.
+  const aloneInOwn = S.data.account && isCreator() && Object.values(sy()?.members || {}).filter(m => m.status === 'active').length <= 1;
+  if (shared() && !aloneInOwn) return infoBox(t('Already sharing'), t('This device is already part of a family book. Leave it first to join another.'));
   const pre = parseInvite(prefill), device = !!pre?.d;
   modal(`<h3>🔗 ${esc(device ? t('Link this device') : t('Join a family / link this device'))}</h3>
     <p class="small">${esc(device
@@ -2942,7 +3254,11 @@ function joinModal(prefill = '') {
       await busy(f.querySelector('button.primary'), t('Joining…'), async () => {
         const before = JSON.stringify(S.data);
         try { await joinFamily(inv, name); }
-        catch (e) { stopSync(); S.data = migrate(JSON.parse(before)); persist(true); $('#merr', box).textContent = setupError(e); return; }
+        catch (e) { // put everything back as it was, and carry on syncing as before
+          const rt = sy()?.rt; // the sign-in token may have been renewed meanwhile: keep the newest
+          stopSync(true); S.data = migrate(JSON.parse(before)); if (S.data.sync && rt) S.data.sync.rt = rt; persist(true); startSync();
+          $('#merr', box).textContent = accountError(e); return;
+        }
         close(); render(); updateBadge();
         if (inv.d) toast(t('✅ This device is linked'), t('Your accounts now stay the same on all your linked devices.'));
         else toast(t('✅ You joined the family book'), t('Your expenses are now shared with your family.'));
@@ -2986,16 +3302,25 @@ function memberModal(id) {
   });
 }
 async function familyLeave() {
-  const creator = isCreator(), ownerDevice = !creator && myRole() === 'owner';
-  const msg = creator
-    ? t('This deletes the family book from the cloud. Family members will stop syncing. All entries stay on this device.')
-    : ownerDevice ? t('This device will stop syncing. Everything already on it stays here.')
-    : t("You will stop sharing. The family's entries will be removed from this device; your own entries stay.");
-  if (!(await confirmBox(msg, creator ? t('Delete family book') : ownerDevice ? t('Unlink this device') : t('Leave'), true))) return;
-  try { await rpc(creator ? 'ha_delete_book' : 'ha_leave', { p_book: sy().book }); }
+  const s = sy();
+  if (!S.data.account) { // older copy without an account
+    if (!(await confirmBox(t('This device will stop syncing. Everything already on it stays here.'), t('Leave'), true))) return;
+    try { await rpc(isCreator() ? 'ha_delete_book' : 'ha_leave', { p_book: s.book }); } catch { /* offline / already gone */ }
+    dropSharing(true); return toast(t('✅ Sharing stopped'));
+  }
+  if (isCreator()) { // my own book: remove everyone else; my account book stays
+    if (!(await confirmBox(t('Everyone else will be removed from your account book and stop seeing it. What they added stays. Continue?'), t('Remove everyone'), true))) return;
+    try {
+      for (const [id, m] of Object.entries(s.members || {})) if (id !== s.me && m.status === 'active') await rpc('ha_set_member', { p_book: s.book, p_user: id, p_role: m.role, p_status: 'removed' });
+    } catch (e) { return toast(t('Could not sync: {e}', { e: setupError(e) }), '', 'warning'); }
+    await syncNow({ members: true }); render();
+    return toast(t('✅ Sharing stopped'));
+  }
+  if (!(await confirmBox(t("You will stop sharing. The family's entries will be removed from this device; your own entries stay."), t('Leave'), true))) return;
+  try { await rpc('ha_leave', { p_book: s.book }); }
   catch (e) { if (!e.net && e.status !== 403 && !e.auth) return toast(t('Could not sync: {e}', { e: setupError(e) }), '', 'warning'); }
-  dropSharing(creator || ownerDevice);
-  toast(t('✅ Sharing stopped'));
+  try { await startOwnBook(); } catch (e) { return toast(t('Could not sync: {e}', { e: accountError(e) }), '', 'warning'); }
+  toast(t('✅ Sharing stopped'), t('You now have your own account book again.'));
 }
 // An invite opened as a link (…#join=HA1.…) is remembered until the app is unlocked.
 let pendingInvite = null;
@@ -3058,14 +3383,14 @@ const ACTIONS = {
   planItem: el => planItemModal(S.ui.planMonth, el.dataset.id),
   planCopy: () => copyPlan(S.ui.planMonth),
   planFill: () => fillFromBudgets(S.ui.planMonth),
-  familyDevice: () => inviteModal({ device: true }),
-  familySetup: () => familySetupModal(),
   familyJoin: () => joinModal(),
   familyInvite: () => inviteModal(),
   familySync: () => syncNow({ members: true }).then(() => { if (S.ui.view === 'settings') render(); }),
   familyMember: el => memberModal(el.dataset.id),
   familyLeave: () => familyLeave(),
-  familyDrop: () => dropSharing(myRole() === 'owner'),
+  familyDrop: () => (S.data.account ? startOwnBook().catch(e => toast(t('Could not sync: {e}', { e: accountError(e) }), '', 'warning')) : dropSharing(myRole() === 'owner')),
+  signOut: async () => { if (await confirmBox(t('Sign out of this device? Your accounts stay safe in your account – log in again with your mobile number and password.'), t('Sign out'))) signOutDevice(); },
+  deleteAccount: () => deleteAccountModal(),
   changePw: () => changePwModal(),
   newCode: () => newCodeModal(),
   backup: () => makeBackup(),
