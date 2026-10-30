@@ -8,6 +8,6 @@
    cloud-setup.sql permits), so it is fine that they are in this file.
    ===================================================================== */
 window.HA_CONFIG = window.HA_CONFIG || {
-  supabaseUrl: '',   // e.g. 'https://abcdxyz.supabase.co'
-  supabaseKey: '',   // e.g. 'sb_publishable_...'  (or the older "anon public" key)
+  supabaseUrl: 'https://hsgngocbycawmttmgisa.supabase.co',
+  supabaseKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhzZ25nb2NieWNhd210dG1naXNhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTMzMjEyNzAsImV4cCI6MjEwODg5NzI3MH0.gQb213NyzAbBLoKnSPzZIVLLHtL-qVfMqYX-jKuDnTA',
 };

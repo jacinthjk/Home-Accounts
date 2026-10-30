@@ -2,7 +2,7 @@
    Keeps a copy of the app's own files so it opens without internet.
    It never stores or sees your accounts: those are encrypted in the browser's storage, not in this cache.
    Change VERSION whenever the app files change, so phones pick up the new version. */
-const VERSION = 'home-accounts-v7';
+const VERSION = 'home-accounts-v8';
 const FILES = [
   './', './index.html', './config.js', './app.js', './i18n.js', './styles.css', './manifest.webmanifest',
   './icons/icon.svg', './icons/icon-192.png', './icons/icon-512.png', './icons/icon-maskable-512.png', './icons/apple-touch-icon.png',
