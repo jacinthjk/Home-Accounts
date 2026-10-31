@@ -131,7 +131,20 @@ Set a **monthly budget** in Settings. You can also set a budget for each type of
 - you have used 80% of a budget, or crossed it
 - you are spending more than your income
 - today's spending is much higher than usual
-- you are spending more than usual on a particular item, such as Milk or Gas
+- you are spending more than usual on a particular item, such as Milk or Gas, or on a whole type of expense
+- you may miss your saving goal, or have already gone past what you can spend
+- this year's spending is more than 10% above the same dates last year
+
+## Saving goal 🏦
+Choose how much of your income to save (on Home, or in Settings → Budgets). Home then shows how much to keep aside and **how much you can spend today**.
+
+## Where we spend more 📊
+Open **Reports → Whole year** to see which types of expense and which items cost the most, how each compares with last year, your highest and lowest months, and how much a 10% cut would save in a year.
+
+## Daily reminder ⏰
+Turn it on in **Settings → Daily reminder** on each phone or computer. For privacy, a reminder never shows an amount or an item.
+
+Reminders while the app is closed work only where the device allows them, mainly an **installed** app on an Android phone or a computer using Chrome or Edge. The phone decides the exact moment, so one may come late. On other devices, such as an iPhone, the reminder comes only while the app is open in the background. The Reminder card tells you which applies to your device.
 
 ## Keeping it private 🔐
 - Everything is **encrypted** with your password and saved on this device (computer or phone). The app never sends your accounts over the internet, except to your own family cloud when you turn on **Family sharing**, and then only in encrypted form.

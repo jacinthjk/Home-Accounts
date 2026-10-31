@@ -132,6 +132,9 @@ html:lang(ta) .bottom-nav button { font-size: .72rem; }
   html:lang(ta) .bottom-nav button { font-size: .68rem; }
   html:lang(ta) .nav-lbl { white-space: nowrap; }
 }
+.saving-today { font-size: 1.35rem; }
+.rise { color: var(--danger); font-weight: 600; }
+.fall { color: var(--accent); font-weight: 600; }
 .more-list { display: flex; flex-direction: column; gap: 10px; margin-bottom: 12px; }
 .more-list .btn { justify-content: flex-start; min-height: 64px; font-size: 1.1rem; gap: 14px; }
 .more-list .btn .ico { font-size: 1.6rem; }
@@ -268,6 +271,10 @@ textarea.input { min-height: 80px; resize: vertical; }
 .hbar .track { height: 18px; background: var(--surface-2); border-radius: 4px; overflow: hidden; }
 .hbar .fill { height: 100%; background: var(--series-1); border-radius: 0 4px 4px 0; min-width: 2px; }
 .hbar .val { font-size: .92rem; font-weight: 600; white-space: nowrap; }
+/* Year report: the full name and figures on one line, the bar under them */
+#yearWhere .hbar { grid-template-columns: 1fr auto; gap: 4px 10px; margin-bottom: 14px; }
+#yearWhere .hbar .lab { white-space: normal; }
+#yearWhere .hbar .track { grid-column: 1 / -1; grid-row: 2; height: 12px; }
 .chart-wrap { position: relative; }
 .chart-wrap svg { width: 100%; max-width: 640px; height: auto; display: block; overflow: visible; margin: 0 auto; }
 .chart-wrap svg text { fill: var(--muted); font-size: 11px; }

@@ -64,6 +64,7 @@ const fmtMonthShort = mk => pkey(mk + '-01').toLocaleDateString(DLOC(), { month:
 function setLang(l) {
   LANG = l === 'ta' ? 'ta' : 'en';
   writePrefs({ lang: LANG });
+  saveReminderConfig();
   paintShell();
   if (!L.classList.contains('hidden')) (lockScreen || (() => showLock(lockMsg)))(); // stay on the same screen
   else if (S.dataKey) { render(); updateBadge(); }
@@ -275,7 +276,7 @@ function defaultData(name, curCode) {
   return {
     v: 2,
     created: new Date().toISOString(),
-    settings: { name: name || '', cur: curCode, monthlyBudget: 0, autoLock: 5, lastBackup: null, voiceLang: LANG === 'ta' ? 'ta-IN' : 'en-IN', voiceCloudOk: false },
+    settings: { name: name || '', cur: curCode, monthlyBudget: 0, savingsPct: 0, autoLock: 5, lastBackup: null, voiceLang: LANG === 'ta' ? 'ta-IN' : 'en-IN', voiceCloudOk: false },
     categories: DEFAULT_CATS.map(([id, n, icon]) => ({ id, name: n, icon, budget: 0 })),
     // Sample prices are typical Indian prices; for other currencies the user sets their own.
     // `unit` = what the price is for; `qUnit` = the unit last used when buying (remembered).
@@ -287,7 +288,7 @@ function defaultData(name, curCode) {
   };
 }
 function migrate(d) {
-  d.settings = { name: '', cur: 'INR', monthlyBudget: 0, autoLock: 5, lastBackup: null, voiceLang: 'en-IN', voiceCloudOk: false, ...(d.settings || {}) };
+  d.settings = { name: '', cur: 'INR', monthlyBudget: 0, savingsPct: 0, autoLock: 5, lastBackup: null, voiceLang: 'en-IN', voiceCloudOk: false, ...(d.settings || {}) };
   d.categories ||= DEFAULT_CATS.map(([id, n, icon]) => ({ id, name: n, icon, budget: 0 }));
   if (!d.categories.some(c => c.id === 'other')) d.categories.push({ id: 'other', name: 'Others', icon: '📦', budget: 0 });
   d.items ||= []; d.ledger ||= {}; d.income ||= [];
@@ -344,6 +345,22 @@ function monthStats(mk) {
   return r;
 }
 
+/** Spending between two dates (both included), in total and for each type of expense. */
+function catTotals(from, to) {
+  const r = { total: 0, byCat: {} };
+  for (const [k, d] of Object.entries(S.data.ledger)) {
+    if (k < from || k > to) continue;
+    for (const l of Object.values(d.lines)) { const a = lineAmt(l); r.total += a; r.byCat[l.cat] = (r.byCat[l.cat] || 0) + a; }
+  }
+  return r;
+}
+/** The saving goal for a month: how much to keep, and what can be spent after keeping it. */
+function savingPlan(mk, st = monthStats(mk)) {
+  const pc = S.data.settings.savingsPct || 0, income = st.income || +S.data.plans?.[mk]?.income || 0;
+  const goal = round2(income * pc / 100), canSpend = round2(income - goal);
+  return { pc, income, goal, canSpend, left: round2(canSpend - st.expense) };
+}
+
 /** Warnings & tips. Each alert: {id, lvl: danger|warning|info|good, ico, t (title), m (message)} */
 function computeAlerts() {
   const tk = todayKey(), mk = mkey(tk), st = monthStats(mk), set = S.data.settings, out = [];
@@ -370,9 +387,16 @@ function computeAlerts() {
     else if (p >= 0.8) out.push({ id: `cat-80-${c.id}-${mk}`, lvl: 'warning', ico: c.icon, t: t('{c}: {p} of budget used', { c: nm(c.name), p: pct(p * 100) }),
       m: t('Spent {a} of {b}. {c} left.', { a: money(s), b: money(c.budget), c: money(c.budget - s) }) });
   }
+  const sp = savingPlan(mk, st);
   if (st.income > 0 && st.expense > st.income) {
     out.push({ id: `inc-over-${mk}`, lvl: 'danger', ico: '🔴', t: t('Spending is more than income'),
       m: t('This month you spent {a} but received {b}. You are short by {c}.', { a: money(st.expense), b: money(st.income), c: money(st.expense - st.income) }) });
+  } else if (sp.pc > 0 && sp.income > 0) {
+    const proj = (st.expense / dom) * dim;
+    if (sp.left < 0) out.push({ id: `save-over-${mk}`, lvl: 'danger', ico: '🏦', t: t('Your saving goal is at risk'),
+      m: t('To save {g} this month, spending should stay under {a}. You have spent {b}, which is {c} too much.', { g: money(sp.goal), a: money(sp.canSpend), b: money(st.expense), c: money(-sp.left) }) });
+    else if (dom >= 5 && proj > sp.canSpend) out.push({ id: `save-pace-${mk}`, lvl: 'warning', ico: '🏦', t: t('You may miss your saving goal'),
+      m: t('At this pace you may spend about {a} this month. To save {g}, keep it under {b}.', { a: money(proj), g: money(sp.goal), b: money(sp.canSpend) }) });
   } else if (st.income > 0 && st.expense > st.income * 0.9) {
     out.push({ id: `inc-90-${mk}`, lvl: 'warning', ico: '🟠', t: t('Savings are very low this month'),
       m: t("You have used {p} of this month's income. Try to save at least 10–20%.", { p: pct(st.expense / st.income * 100) }) });
@@ -399,6 +423,21 @@ function computeAlerts() {
     over.sort((a, b) => b.extra - a.extra).slice(0, 3).forEach(o => out.push({
       id: `item-${o.k}-${mk}`, lvl: 'warning', ico: o.it.icon || '🛍️', t: t('More spent on {i}', { i: nm(o.it.name) }),
       m: t('{a} this month, but usually about {b} a month ({c} more).', { a: money(o.it.amt), b: money(o.avg), c: money(o.extra) }) }));
+    // The type of expense that has grown the most (one with its own budget already warns)
+    const grown = Object.entries(st.byCat).map(([id, a]) => ({ id, a, avg: prevM.reduce((s, m) => s + (m.byCat[id] || 0), 0) / prevM.length }))
+      .filter(x => x.avg > 0 && x.a > x.avg * 1.3 && !(catInfo(x.id).budget > 0)).sort((x, y) => (y.a - y.avg) - (x.a - x.avg))[0];
+    if (grown) { const c = catInfo(grown.id); out.push({ id: `cat-more-${c.id}-${mk}`, lvl: 'warning', ico: c.icon, t: t('You are spending more on {c}', { c: nm(c.name) }),
+      m: t('{a} this month, but usually about {b} a month ({c} more).', { a: money(grown.a), b: money(grown.avg), c: money(grown.a - grown.avg) }) }); }
+  }
+
+  // This year so far compared with the same dates last year
+  if (mk.slice(5) > '01') {
+    const y = +mk.slice(0, 4), now = catTotals(`${y}-01-01`, tk), was = catTotals(`${y - 1}-01-01`, `${y - 1}-${tk.slice(5)}`);
+    if (was.total > 0 && now.total > was.total * 1.1) {
+      const rise = Object.keys(now.byCat).sort((a, b) => (now.byCat[b] - (was.byCat[b] || 0)) - (now.byCat[a] - (was.byCat[a] || 0)))[0];
+      out.push({ id: `year-more-${y}`, lvl: 'warning', ico: '📊', t: t('Spending is higher than last year'), act: 'year',
+        m: t('So far this year you spent {a}, which is {b} more than by this date last year. The biggest rise is in {c}.', { a: money(now.total), b: money(now.total - was.total), c: nm(catInfo(rise).name) }) });
+    }
   }
 
   // This month's plan: payments due soon / overdue, and spending above the plan
@@ -427,7 +466,7 @@ function computeAlerts() {
   // Nothing wrong? Say something nice.
   if (!out.some(a => a.lvl === 'danger' || a.lvl === 'warning') && st.income > 0 && st.expense < st.income) {
     const rate = (st.income - st.expense) / st.income * 100;
-    if (rate >= 20) out.push({ id: `good-${mk}`, lvl: 'good', ico: '🌟', t: t('Well done!'), m: t("You have saved {p} of this month's income so far.", { p: pct(rate) }) });
+    if (rate >= (set.savingsPct || 20)) out.push({ id: `good-${mk}`, lvl: 'good', ico: '🌟', t: t('Well done!'), m: t("You have saved {p} of this month's income so far.", { p: pct(rate) }) });
   }
   // Backup reminder
   const hasData = Object.keys(S.data.ledger).length || S.data.income.length;
@@ -451,6 +490,7 @@ function scheduleAlertCheck() {
       if ((a.lvl === 'danger' || a.lvl === 'warning') && !S.shown.has(a.id)) {
         S.shown.add(a.id);
         if (shown++ < 2) toast(`${a.ico} ${a.t}`, a.m, a.lvl);
+        if (document.hidden) warnByNotification();
       }
     }
   }, 700);
@@ -712,6 +752,7 @@ async function signOutDevice() {
   }
   localStorage.removeItem(VAULT_KEY);
   resetAttempts();
+  writePrefs({ reminderOn: false }); ensureReminders();
   hardLock(t('You have signed out of this device. Log in to see your accounts again.'));
 }
 
@@ -1028,6 +1069,7 @@ function startApp() {
   S.shown = new Set(alerts.map(a => a.id)); // already listed on Home – don't pop them again
   updateBadge(alerts);
   bump(); armAutoLock();
+  ensureReminders();
   go('home');
   startSync();
   if (pendingInvite) { const inv = pendingInvite; pendingInvite = null; if (!shared()) { go('settings'); joinModal(inv); } }
@@ -1139,6 +1181,84 @@ window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); instal
 window.addEventListener('appinstalled', () => { installEvt = null; toast(t('✅ App installed'), t('Open it from your home screen or app list.')); });
 
 /* ---------------------------------------------------------------------
+   Reminders. To keep accounts confidential, a notification never contains an amount or an item:
+   it can appear on a locked phone, and the accounts themselves are encrypted and closed by then.
+   The on/off switch and the time are per device, kept with the display preferences.
+   --------------------------------------------------------------------- */
+const REMINDER_CACHE = 'home-accounts-reminder', REMINDER_FILE = './reminder.json';
+const canNotify = () => isWeb && 'Notification' in window && 'serviceWorker' in navigator;
+let reminderBackground = false; // can reminders also arrive while the app is closed?
+async function saveReminderConfig() {
+  if (!canNotify()) return;
+  const p = readPrefs(), cache = await caches.open(REMINDER_CACHE);
+  const old = await (await cache.match(REMINDER_FILE))?.json().catch(() => null);
+  await cache.put(REMINDER_FILE, new Response(JSON.stringify({ on: !!p.reminderOn, hour: p.reminderHour ?? 20, last: old?.last || '',
+    title: t('📒 Home Accounts'), body: t("Have you noted today's expenses? Open the app to check your saving goal."),
+    monthBody: t('A new month has started. Keep your saving aside first, then plan your spending.') })));
+}
+async function ensureReminders() {
+  if (!canNotify()) return;
+  await saveReminderConfig();
+  const on = readPrefs().reminderOn && Notification.permission === 'granted';
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    if (!reg.periodicSync) { reminderBackground = false; return; }
+    if (on) await reg.periodicSync.register('daily-reminder', { minInterval: 12 * 36e5 });
+    else await reg.periodicSync.unregister('daily-reminder');
+    reminderBackground = !!on;
+  } catch { reminderBackground = false; } // allowed only for an installed app
+}
+function reminderStatusText() {
+  if (!canNotify()) return t(isWeb && isIOS() ? 'On iPhone / iPad, first add the app to your Home Screen (see below), then open it from there.' : 'Reminders are not available in this browser.');
+  if (Notification.permission === 'denied') return t('Notifications are blocked for this app. Allow them in your browser or phone settings, then come back here.');
+  if (!readPrefs().reminderOn) return t('Reminders are off on this device.');
+  return t(reminderBackground ? 'Reminders are on. The phone decides the exact moment, so one may come later than the time you chose.' : 'Reminders are on, but on this device they come only while the app is open in the background. Keep the app open, or check it daily.');
+}
+async function showReminderStatus(v) {
+  const el = $('#reminderStatus', v); if (!el) return;
+  el.textContent = reminderStatusText();
+  await ensureReminders();
+  if (el.isConnected) el.textContent = reminderStatusText();
+}
+async function toggleReminders() {
+  if (readPrefs().reminderOn) { writePrefs({ reminderOn: false }); await ensureReminders(); render(); return; }
+  if (!canNotify()) return;
+  if ((await Notification.requestPermission()) !== 'granted') { toast(t('Notifications are blocked for this app. Allow them in your browser or phone settings, then come back here.'), '', 'warning'); render(); return; }
+  writePrefs({ reminderOn: true }); await ensureReminders(); render();
+  toast(t('✅ Reminders are on'));
+}
+async function testReminder() {
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    await reg.showNotification(t('📒 Home Accounts'), { body: t("Have you noted today's expenses? Open the app to check your saving goal."), icon: 'icons/icon-192.png', tag: 'test-reminder' });
+  } catch { toast(t('Could not show the reminder on this device.'), '', 'warning'); }
+}
+/** A spending warning arrived while the app is in the background. The details wait inside the app. */
+async function warnByNotification() {
+  if (!canNotify() || !readPrefs().reminderOn || Notification.permission !== 'granted') return;
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    await reg.showNotification(t('📒 Home Accounts'), { body: t('A spending warning is waiting. Open the app to see it.'), icon: 'icons/icon-192.png', tag: 'spending-warning' });
+  } catch { /* the warning is still shown inside the app */ }
+}
+function reminderCard() {
+  const p = readPrefs(), on = !!p.reminderOn, hour = p.reminderHour ?? 20;
+  const label = h => new Date(2000, 0, 1, h).toLocaleTimeString(DLOC(), { hour: 'numeric', minute: '2-digit' });
+  const ok = canNotify() && Notification.permission !== 'denied';
+  return `<div class="card" id="reminderCard"><h3>🔔 ${esc(t('Daily reminder'))}</h3>
+    <p class="small muted" style="margin-top:0">${esc(t('A reminder each day to note your expenses and check your saving goal. For privacy, it never shows any amount or item.'))}</p>
+    ${ok ? `<button class="btn ${on ? '' : 'primary'} block" data-act="reminderToggle">${esc(t(on ? 'Turn reminders off' : 'Turn reminders on'))}</button>` : ''}
+    ${on && ok ? `<label class="field" style="margin-top:12px"><span>${esc(t('Remind me at'))}</span><select class="input" id="reminderHour">${[...Array(17).keys()].map(i => i + 6).map(h => `<option value="${h}" ${hour === h ? 'selected' : ''}>${esc(label(h))}</option>`).join('')}</select></label>
+      <button class="btn block" data-act="reminderTest">${esc(t('Send a test reminder'))}</button>` : ''}
+    <p class="small muted" id="reminderStatus" style="margin:10px 0 0"></p></div>`;
+}
+// While the app is open but out of sight, ask the offline helper whether today's reminder is due.
+if (isWeb && 'serviceWorker' in navigator) setInterval(() => {
+  if (!document.hidden || !readPrefs().reminderOn || !navigator.serviceWorker.controller) return;
+  navigator.serviceWorker.controller.postMessage({ type: 'reminder-check', done: !!S.data && dayTotal(todayKey()) > 0 });
+}, 60e3);
+
+/* ---------------------------------------------------------------------
    Shared bits for views
    --------------------------------------------------------------------- */
 const monthBar = (mk, act) => `
@@ -1150,6 +1270,7 @@ const monthBar = (mk, act) => `
 const alertHtml = a => `<div class="alert ${a.lvl}"><span class="ico" aria-hidden="true">${esc(a.ico)}</span>
   <div style="flex:1"><b>${esc(a.t)}</b><span class="small">${esc(a.m)}</span>
   ${a.act === 'backup' ? `<div><button class="btn sm" data-act="backup" style="margin-top:8px">💾 ${esc(t('Make a backup now'))}</button></div>` : ''}
+  ${a.act === 'year' ? `<div><button class="btn sm" data-act="openYear" data-y="${esc(todayKey().slice(0, 4))}" style="margin-top:8px">📊 ${esc(t('See the year report'))}</button></div>` : ''}
   ${a.act === 'planner' ? `<div><button class="btn sm" data-act="openPlan" data-m="${esc(a.mk)}" style="margin-top:8px">📅 ${esc(t('Open the planner'))}</button></div>` : ''}</div></div>`;
 function progressHtml(spent, budget) {
   const p = budget > 0 ? spent / budget : 0;
@@ -1161,12 +1282,50 @@ const rowBtn = 'style="width:100%;background:none;border:0;border-bottom:1px sol
 /* ---------------------------------------------------------------------
    HOME
    --------------------------------------------------------------------- */
+/** Ideas from well-known money books, in our own short words. One is shown each day. */
+const MONEY_TIPS = [
+  ['Money you did not spend today is your freedom tomorrow. Real wealth is what you do not see.', 'The Psychology of Money'],
+  ['Before buying, ask: will this bring money in, or take money out every month?', 'Rich Dad Poor Dad'],
+  ['Write down one clear money goal with a date. A clear goal is easier to follow.', 'Think and Grow Rich'],
+  ['Note each expense as soon as you buy. Small daily habits add up to big savings.', 'Atomic Habits'],
+  ['Clear your smallest loan first, then add that payment to the next loan.', 'The Total Money Makeover'],
+  ['Think of a price as hours of work. Is this worth that many hours?', 'Your Money or Your Life'],
+  ['Leave a margin of safety. Do not plan to spend every rupee you earn.', 'The Intelligent Investor'],
+  ['When you invest, keep costs low and stay patient for many years.', 'Common Sense Investing'],
+  ['Move your saving aside on salary day, then spend freely on what you truly love.', 'I Will Teach You to Be Rich'],
+  ['A few expenses make up most of the bill. Work on those first.', 'The 4-Hour Workweek'],
+  ['Talk about money at home. A goal the family shares is easier to reach.', 'Broke Millennial'],
+  ['Living below your income builds more wealth than a big income does.', 'The Millionaire Next Door'],
+  ['Wait one day before a big unplanned purchase. Quick decisions often cost more.', 'Thinking, Fast and Slow'],
+];
+function tipCard() {
+  const day = Math.floor((pkey(todayKey()) - pkey(todayKey().slice(0, 4) + '-01-01')) / 864e5);
+  const [tip, book] = MONEY_TIPS[day % MONEY_TIPS.length];
+  return `<div class="card"><h3>💡 ${esc(t("Today's money idea"))}</h3><p style="margin:0 0 6px">${esc(t(tip))}</p>
+    <p class="small muted" style="margin:0">${esc(t('Idea from: {b}', { b: book }))}</p></div>`;
+}
+function homeSavingCard(mk, st) {
+  const sp = savingPlan(mk, st), head = `<h3>🏦 ${esc(t('Saving goal'))}</h3>`;
+  if (!sp.pc) return `<div class="card">${head}<p class="muted" style="margin:0 0 10px">${esc(t('Decide first how much to save each month. The app then shows what you can spend.'))}</p>
+    ${canManage() ? `<div class="row wrap">${[10, 20, 30].map(v => `<button class="chip" data-act="savingGoal" data-v="${v}">${esc(t('Save {p}', { p: pct(v) }))}</button>`).join('')}</div>` : ''}</div>`;
+  if (!sp.income) return `<div class="card">${head}<p class="muted" style="margin:0 0 10px">${esc(t("Your goal is to save {p} of your income. Add this month's income to see what you can spend.", { p: pct(sp.pc) }))}</p>
+    <button class="btn" data-act="nav" data-to="income">${esc(t('Add income'))}</button></div>`;
+  const dLeft = daysInMonth(mk) - pkey(todayKey()).getDate() + 1;
+  return `<div class="card">${head}
+    <p style="margin:0 0 8px">${th('Keep aside **{g}** ({p} of income)', { g: M(sp.goal), p: pct(sp.pc) })}</p>
+    ${progressHtml(st.expense, sp.canSpend)}
+    ${sp.left >= 0 ? `<div class="row wrap" style="margin-top:10px"><span>${esc(t('You can spend today'))}</span><span class="spacer"></span><b class="saving-today">${M(sp.left / dLeft)}</b></div>
+      <p class="small muted" style="margin:4px 0 0">${th(dLeft > 1 ? '{a} left for the next {n} days' : '{a} left for today', { a: M(sp.left), n: dLeft })}</p>`
+    : `<p style="margin:10px 0 0;color:var(--danger)"><b>${th('{a} over what you can spend', { a: M(-sp.left) })}</b></p>`}
+  </div>`;
+}
 function viewHome() {
   const tk = todayKey(), mk = mkey(tk), st = monthStats(mk), set = S.data.settings;
   const h = new Date().getHours();
   const greet = t(h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening');
   const savings = st.income - st.expense;
-  const alerts = computeAlerts(); updateBadge(alerts);
+  const RANK = { danger: 0, warning: 1, info: 2, good: 3 };
+  const alerts = computeAlerts().sort((a, b) => RANK[a.lvl] - RANK[b.lvl]); updateBadge(alerts);
   const top = Object.values(st.byItem).sort((a, b) => b.amt - a.amt).slice(0, 5);
   const days = []; for (let i = 0; i < 7; i++) days.push(addDays(tk, -i));
   const maxDay = Math.max(...Object.values(st.byDay), 0);
@@ -1194,6 +1353,14 @@ function viewHome() {
   </div>
 
   <div class="cards-2">
+  ${homeSavingCard(mk, st)}
+
+  <div class="card">
+    <h3>🔔 ${esc(t('Warnings & tips'))}</h3>
+    ${alerts.length ? alerts.slice(0, 3).map(alertHtml).join('') : `<div class="empty">✅ ${esc(t('All good! No warnings right now.'))}</div>`}
+    ${alerts.length > 3 ? `<details class="tv"><summary>${esc(t('Show {n} more', { n: alerts.length - 3 }))}</summary>${alerts.slice(3).map(alertHtml).join('')}</details>` : ''}
+  </div>
+
   <div class="card">
     <h3>🎯 ${esc(t('Monthly budget'))}</h3>
     ${set.monthlyBudget > 0 ? `
@@ -1208,11 +1375,6 @@ function viewHome() {
   ${homeLoanCard()}
 
   <div class="card">
-    <h3>🔔 ${esc(t('Warnings & tips'))}</h3>
-    ${alerts.length ? alerts.map(alertHtml).join('') : `<div class="empty">✅ ${esc(t('All good! No warnings right now.'))}</div>`}
-  </div>
-
-  <div class="card">
     <h3>🔥 ${esc(t('Highest spends this month'))}</h3>
     ${top.length ? top.map((it, i) => `
       <div class="list-row"><span class="emo" aria-hidden="true">${esc(it.icon || '🛍️')}</span>
@@ -1220,7 +1382,10 @@ function viewHome() {
         <div class="amt">${M(it.amt)}</div></div>`).join('')
       : `<div class="empty">${esc(t('No spending recorded this month yet.'))}</div>`}
     ${bigDay ? `<p class="small muted" style="margin:10px 0 0">${th('Biggest spending day: **{d}** – {a}', { d: esc(fmtShort(bigDay[0])), a: M(bigDay[1]) })}</p>` : ''}
+    <button class="btn block" data-act="openYear" data-y="${esc(tk.slice(0, 4))}" style="margin-top:12px">📊 ${esc(t('Where we spend more this year'))}</button>
   </div>
+
+  ${tipCard()}
 
   <div class="card">
     <h3>📅 ${esc(t('Last 7 days'))}</h3>
@@ -1651,7 +1816,81 @@ function colChart(groups, label) {
   });
   return `<div class="chart-wrap money">${s}</div>`;
 }
+const reportTabs = () => `<div class="row wrap" style="margin-bottom:12px">${[['month', 'One month'], ['year', 'Whole year']].map(([v, l]) => `<button class="chip" data-act="repMode" data-v="${v}" aria-pressed="${(S.ui.repMode || 'month') === v}">${esc(t(l))}</button>`).join('')}</div>`;
+const saveOrPrintCard = () => `<div class="card"><h3>${esc(t('Save or print'))}</h3>
+    <div class="grid-2">
+      <button class="btn" data-act="print">🖨️ ${esc(t('Print this report'))}</button>
+      <button class="btn" data-act="csv">📄 ${esc(t('Export to Excel (CSV)'))}</button>
+    </div>
+    <p class="small muted" style="margin:10px 0 0">${th('Note: printed pages and exported Excel files are **not** password protected. Keep them safe or delete them after use.')}</p>
+  </div>`;
+function viewYearReport() {
+  const tk = todayKey(), y = S.ui.repYear ||= +tk.slice(0, 4), thisYear = y === +tk.slice(0, 4);
+  const st = monthStats(String(y)), saved = st.income - st.expense;
+  const was = catTotals(`${y - 1}-01-01`, thisYear ? `${y - 1}-${tk.slice(5)}` : `${y - 1}-12-31`);
+  const months = []; for (let i = 1; i <= 12; i++) { const m = `${y}-${pad(i)}`, s = monthStats(m); months.push({ m, s, label: fmtMonthShort(m), showLabel: LANG !== 'ta' || i % 3 === 1, values: [s.income, s.expense],
+    tip: t('{m} – Income: {a}, Expenses: {b}, Saved: {c}', { m: fmtMonth(m), a: money(s.income), b: money(s.expense), c: money(s.income - s.expense) }) }); }
+  const active = months.filter(x => x.s.expense > 0);
+  const byExp = [...active].sort((a, b) => b.s.expense - a.s.expense);
+  const cats = Object.entries(st.byCat).sort((a, b) => b[1] - a[1]), maxCat = cats[0]?.[1] || 1;
+  const items = Object.values(st.byItem).sort((a, b) => b.amt - a.amt).slice(0, 10);
+  const change = id => { const o = was.byCat[id] || 0; if (!o) return ''; const d = ((st.byCat[id] || 0) - o) / o * 100; if (Math.abs(d) < 1) return '';
+    return `<span class="small ${d > 0 ? 'rise' : 'fall'}">${d > 0 ? '▲' : '▼'} ${pct(Math.abs(d))}</span>`; };
+  const goalPc = S.data.settings.savingsPct || 0, rate = st.income > 0 ? saved / st.income * 100 : 0;
+  const avgMonth = active.length ? st.expense / active.length : 0;
+  const yearly = v => v / active.length * 12;
+
+  return `${reportTabs()}
+  <div class="date-bar">
+    <button class="nav-arrow" data-act="repYear" data-d="-1" aria-label="${esc(t('Previous year'))}">◀</button>
+    <div class="date-main"><div class="d1">${y}</div></div>
+    <button class="nav-arrow" data-act="repYear" data-d="1" aria-label="${esc(t('Next year'))}">▶</button>
+  </div>
+  <div class="grid-2 stats" style="margin-bottom:14px">
+    <div class="stat"><div class="k">💰 ${esc(t('Income'))}</div><div class="v">${M(st.income)}</div></div>
+    <div class="stat"><div class="k">🧾 ${esc(t('Expenses'))}</div><div class="v">${M(st.expense)}</div></div>
+    <div class="stat"><div class="k">🏦 ${esc(t('Savings'))}</div><div class="v ${saved >= 0 ? 'good' : 'bad'}">${M(saved)}</div></div>
+    <div class="stat"><div class="k">📊 ${esc(t('Saved'))}</div><div class="v ${saved >= 0 ? 'good' : 'bad'}">${st.income > 0 ? `<span class="money">${pct(rate)}</span>` : '—'}</div></div>
+  </div>
+  ${st.expense ? `
+  <div class="cards-2">
+  <div class="card" id="yearWhere"><h3>🔍 ${esc(t('Where we spend more'))}</h3>
+    <p style="margin:0 0 12px">${th('Most money goes to **{c}**: {a}, which is {p} of all spending.', { c: esc(nm(catInfo(cats[0][0]).name)), a: M(cats[0][1]), p: pct(cats[0][1] / st.expense * 100) })}</p>
+    ${cats.map(([id, v]) => { const c = catInfo(id); return `
+      <div class="hbar" data-tip="${esc(`${nm(c.name)}: ${money(v)} (${pct(v / st.expense * 100)})`)}">
+        <div class="lab">${esc(c.icon)} ${esc(nm(c.name))}</div>
+        <div class="track money"><div class="fill" style="width:${v / maxCat * 100}%"></div></div>
+        <div class="val">${M(v)} <span class="muted small">${pct(v / st.expense * 100)}</span> ${change(id)}</div></div>`; }).join('')}
+    ${was.total > 0 ? `<p class="small muted" style="margin:10px 0 0">${esc(t(thisYear ? '▲▼ compared with the same dates last year' : '▲▼ compared with the year before'))}</p>` : ''}
+  </div>
+
+  <div class="card" id="yearSave"><h3>💡 ${esc(t('Small changes, big savings'))}</h3>
+    ${cats.slice(0, 3).map(([id, v]) => { const c = catInfo(id); return `<div class="list-row"><span class="emo" aria-hidden="true">${esc(c.icon)}</span>
+      <div class="main"><div class="t">${esc(t('10% less on {c}', { c: nm(c.name) }))}</div>
+      <div class="small">${th('saves {a} a year', { a: M(yearly(v) * 0.1) })}</div></div></div>`; }).join('')}
+    ${goalPc && st.income > 0 ? `<p style="margin:12px 0 0">${rate >= goalPc ? th('✅ You reached your goal of saving {p}.', { p: pct(goalPc) }) : th('Your goal is to save {p}. So far it is {q}.', { p: pct(goalPc), q: pct(rate) })}</p>` : ''}
+    ${saved > 0 && avgMonth > 0 ? `<p class="small muted" style="margin:10px 0 0">${esc(t('What you saved would pay for about {n} months of your spending. Many people aim for 6 months.', { n: (saved / avgMonth).toFixed(1) }))}</p>` : ''}
+  </div>
+
+  <div class="card"><h3>🔥 ${esc(t('Biggest items this year'))}</h3>
+    ${items.map((it, i) => `<div class="list-row"><span class="emo" aria-hidden="true">${esc(it.icon || '🛍️')}</span>
+      <div class="main"><div class="t">${i + 1}. ${esc(nm(it.name))}</div><div class="small muted">${esc(t('{p} of spending', { p: pct(it.amt / st.expense * 100) }))}</div></div>
+      <div class="amt">${M(it.amt)}</div></div>`).join('')}
+  </div>
+
+  <div class="card"><h3>📅 ${esc(t('Month by month'))}</h3>
+    <div class="legend"><span><i style="background:var(--series-1)"></i>${esc(t('Income'))}</span><span><i style="background:var(--series-2)"></i>${esc(t('Expenses'))}</span></div>
+    ${colChart(months, t('Income and expenses for each month of {y}', { y }))}
+    ${byExp.length > 1 ? `<p class="small" style="margin:10px 0 0">${th('Highest: **{m}** – {a}', { m: esc(fmtMonth(byExp[0].m)), a: M(byExp[0].s.expense) })}<br>${th('Lowest: **{m}** – {a}', { m: esc(fmtMonth(byExp[byExp.length - 1].m)), a: M(byExp[byExp.length - 1].s.expense) })}</p>` : ''}
+    <details class="tv"><summary>${esc(t('Show as a table'))}</summary><div class="tbl-wrap"><table class="tbl"><tr><th>${esc(t('Month'))}</th><th class="r">${esc(t('Income'))}</th><th class="r">${esc(t('Expenses'))}</th><th class="r">${esc(t('Saved'))}</th></tr>
+      ${months.map(x => `<tr><td>${esc(fmtMonth(x.m))}</td><td class="r">${M(x.s.income)}</td><td class="r">${M(x.s.expense)}</td><td class="r">${M(x.s.income - x.s.expense)}</td></tr>`).join('')}</table></div></details>
+  </div>
+  </div>
+  ${saveOrPrintCard()}`
+  : `<div class="card"><div class="empty">${esc(t('No expenses recorded in this year.'))}</div></div>`}`;
+}
 function viewReports() {
+  if (S.ui.repMode === 'year') return viewYearReport();
   const mk = S.ui.month, st = monthStats(mk), dim = daysInMonth(mk);
   const tk = todayKey(), daysSoFar = mk === mkey(tk) ? pkey(tk).getDate() : mk < mkey(tk) ? dim : 0;
   const cats = Object.entries(st.byCat).sort((a, b) => b[1] - a[1]);
@@ -1671,7 +1910,7 @@ function viewReports() {
   }
   const savings = st.income - st.expense;
 
-  return `${monthBar(mk, 'month')}
+  return `${reportTabs()}${monthBar(mk, 'month')}
   <div class="grid-2 stats" style="margin-bottom:14px">
     <div class="stat"><div class="k">💰 ${esc(t('Income'))}</div><div class="v">${M(st.income)}</div></div>
     <div class="stat"><div class="k">🧾 ${esc(t('Expenses'))}</div><div class="v">${M(st.expense)}</div></div>
@@ -1715,16 +1954,10 @@ function viewReports() {
   </div>
   </div>
 
-  <div class="card"><h3>${esc(t('Save or print'))}</h3>
-    <div class="grid-2">
-      <button class="btn" data-act="print">🖨️ ${esc(t('Print this report'))}</button>
-      <button class="btn" data-act="csv">📄 ${esc(t('Export to Excel (CSV)'))}</button>
-    </div>
-    <p class="small muted" style="margin:10px 0 0">${th('Note: printed pages and exported Excel files are **not** password protected. Keep them safe or delete them after use.')}</p>
-  </div>`;
+  ${saveOrPrintCard()}`;
 }
 async function exportCsv() {
-  const mk = S.ui.month;
+  const mk = S.ui.repMode === 'year' ? String(S.ui.repYear) : S.ui.month;
   if (!(await confirmBox(t('The Excel (CSV) file will NOT be password protected – anyone who opens the file can read it. Continue?'), t('Yes, export')))) return;
   const q = v => `"${String(v).replace(/"/g, '""')}"`;
   const rows = [['Date', 'Type', 'Item / Source', 'Category', 'Price', 'Price per', 'Quantity', 'Unit', 'Amount', 'Note'].map(h => q(t(h))).join(',')];
@@ -1774,6 +2007,7 @@ function viewSettings() {
   <div class="card"><h3>🎯 ${esc(t('Budgets (spending limits)'))}</h3>
     ${canManage() ? '' : `<p class="small muted">🔒 ${esc(t('Only the owner or an editor can change the shared budgets and currency.'))}</p>`}
     <label class="field"><span>${esc(t('Monthly budget for the whole home'))}</span><input class="input" data-set="monthlyBudget" inputmode="decimal" value="${s.monthlyBudget || ''}" placeholder="${esc(t('e.g. 20000 (leave empty for none)'))}" ${canManage() ? '' : 'disabled'}></label>
+    <label class="field"><span>${esc(t('How much of my income to save'))}</span><select class="input" data-set="savingsPct" ${canManage() ? '' : 'disabled'}>${[0, 5, 10, 15, 20, 25, 30, 40, 50].map(v => `<option value="${v}" ${(s.savingsPct || 0) === v ? 'selected' : ''}>${v ? esc(pct(v)) : esc(t('No goal'))}</option>`).join('')}</select></label>
     <p class="small muted">${esc(t('You can also set a limit for each type of expense. You will be warned at 80% and when it is crossed.'))}</p>
     ${S.data.categories.map(c => `
       <div class="list-row"><span class="emo" aria-hidden="true">${esc(c.icon)}</span>
@@ -1809,6 +2043,8 @@ function viewSettings() {
   </div>
   </div>
 
+  ${reminderCard()}
+
   ${installCard()}
 
   <div class="cards-2">
@@ -1841,6 +2077,9 @@ function viewSettings() {
   <p class="small muted" style="text-align:center">${esc(t('Home Accounts · works offline · your data stays with you'))}</p>`;
 }
 function wireSettings(v) {
+  const rh = $('#reminderHour', v);
+  if (rh) rh.onchange = () => { writePrefs({ reminderHour: Number(rh.value) }); saveReminderConfig(); toast(t('✅ Saved')); };
+  showReminderStatus(v);
   $$('[data-set]', v).forEach(inp => {
     inp.onchange = () => {
       const k = inp.dataset.set, s = S.data.settings;
@@ -1849,6 +2088,7 @@ function wireSettings(v) {
       else if (k === 'autoLock') s.autoLock = Number(inp.value);
       else if (k === 'voiceLang') s.voiceLang = inp.value;
       else if (k === 'voiceCloudOk') s.voiceCloudOk = inp.checked;
+      else if (k === 'savingsPct') s.savingsPct = Number(inp.value);
       else if (k === 'monthlyBudget') {
         const n = inp.value.trim() === '' ? 0 : num(inp.value);
         if (!(n >= 0)) { toast(t('Please enter a valid amount'), '', 'warning'); inp.value = s.monthlyBudget || ''; return; }
@@ -1991,7 +2231,7 @@ function deleteAccountModal() {
         try { await rpc('ha_delete_account', {}); } catch (e) { $('#merr', box).textContent = accountError(e); return; }
         close();
         localStorage.removeItem(VAULT_KEY); localStorage.removeItem(ATTEMPT_KEY);
-        writePrefs({ privacy: false });
+        writePrefs({ privacy: false, reminderOn: false }); ensureReminders();
         hardLock(t('Your account has been deleted.'));
       });
     };
@@ -2008,7 +2248,7 @@ async function eraseAll() {
       if (f.c.value.trim().toUpperCase() !== 'DELETE') { f.c.focus(); return; }
       close();
       localStorage.removeItem(VAULT_KEY); localStorage.removeItem(ATTEMPT_KEY);
-      writePrefs({ privacy: false });
+      writePrefs({ privacy: false, reminderOn: false }); ensureReminders();
       hardLock();
     };
   });
@@ -3024,7 +3264,7 @@ function recordsOf(d) {
   const m = new Map(), me = d.sync?.me;
   for (const it of d.items) m.set(`T|${it.id}`, { name: it.name, price: it.price, cat: it.cat, icon: it.icon, unit: it.unit });
   for (const c of d.categories) m.set(`C|${c.id}`, { name: c.name, icon: c.icon, budget: c.budget || 0 });
-  m.set('S|main', { cur: d.settings.cur, monthlyBudget: d.settings.monthlyBudget || 0 });
+  m.set('S|main', { cur: d.settings.cur, monthlyBudget: d.settings.monthlyBudget || 0, savingsPct: d.settings.savingsPct || 0 });
   for (const i of d.income) m.set(`I|${i.id}`, { date: i.date, source: i.source, amount: i.amount, note: i.note || '' });
   for (const [date, day] of Object.entries(d.ledger)) {
     for (const [k, l] of Object.entries(day.lines)) {
@@ -3061,7 +3301,7 @@ function applyRecord(id, author, deleted, v) {
     if (i >= 0) d.categories[i] = c;
     else { const o = d.categories.findIndex(x => x.id === 'other'); if (o >= 0 && p[1] !== 'other') d.categories.splice(o, 0, c); else d.categories.push(c); }
   } else if (kind === 'S') {
-    if (!deleted) { d.settings.cur = v.cur; d.settings.monthlyBudget = v.monthlyBudget || 0; }
+    if (!deleted) { d.settings.cur = v.cur; d.settings.monthlyBudget = v.monthlyBudget || 0; d.settings.savingsPct = v.savingsPct || 0; }
   } else if (kind === 'I') {
     const i = d.income.findIndex(x => x.id === p[1]);
     if (deleted) { if (i >= 0) d.income.splice(i, 1); return; }
@@ -3625,6 +3865,12 @@ const ACTIONS = {
     try { await installEvt.userChoice; } catch { /* ignore */ }
     installEvt = null; render();
   },
+  savingGoal: el => { if (!canManage()) return; S.data.settings.savingsPct = Number(el.dataset.v); persist(); render(); scheduleAlertCheck(); toast(t('✅ Saved')); },
+  repMode: el => { S.ui.repMode = el.dataset.v; render(); },
+  repYear: el => { S.ui.repYear += Number(el.dataset.d); render(); },
+  openYear: el => { S.ui.repMode = 'year'; S.ui.repYear = +el.dataset.y; go('reports'); },
+  reminderToggle: () => toggleReminders(),
+  reminderTest: () => testReminder(),
   planYear: el => { S.ui.year += Number(el.dataset.d); render(); },
   openPlan: el => { S.ui.planMonth = el.dataset.m; S.ui.year = +el.dataset.m.slice(0, 4); go('planner'); },
   planBack: () => { S.ui.planMonth = null; render(); window.scrollTo(0, 0); },
