@@ -76,7 +76,7 @@ window.HA_I18N = {
 
   // Short words for the bottom menu on phones
   menu: {
-    "Home": "முகப்பு", "Daily Ledger": "கணக்கு", "Planner": "திட்டம்", "Loans": "கடன்", "Income": "வரவு", "Reports": "அறிக்கை", "Settings": "அமைப்பு",
+    "Home": "முகப்பு", "Daily Ledger": "கணக்கு", "Planner": "திட்டம்", "Loans": "கடன்", "Income": "வரவு", "Reports": "விவரம்", "Settings": "அமைப்பு",
   },
 
   units: {
