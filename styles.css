@@ -122,13 +122,20 @@ html:lang(ta) .bottom-nav button { font-size: .72rem; }
   content: ""; position: absolute; top: 0; left: 25%; right: 25%; height: 4px; border-radius: 0 0 4px 4px; background: var(--accent);
 }
 /* Small phones: seven menu buttons must fit (keep this after the menu rules above) */
-@media (max-width: 480px) {
-  .bottom-nav button { font-size: .62rem; letter-spacing: -.1px; padding-left: 1px; padding-right: 1px; }
-  .bottom-nav button .ico { font-size: 1.3rem; }
-  html:lang(ta) .bottom-nav button { font-size: .56rem; letter-spacing: -.2px; }
+.bottom-nav button.nav-more { display: none; }
+@media (max-width: 599px) {
+  /* Reports and Settings move under "More", so the other buttons can be larger */
+  .bottom-nav { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+  .bottom-nav button.nav-more { display: flex; }
+  .bottom-nav button[data-nav="reports"], .bottom-nav button[data-nav="settings"] { display: none; }
+  .bottom-nav button { font-size: .74rem; padding-left: 1px; padding-right: 1px; }
+  html:lang(ta) .bottom-nav button { font-size: .68rem; }
   html:lang(ta) .nav-lbl { white-space: nowrap; }
-  .nav-lbl { max-width: 100%; }
 }
+.more-list { display: flex; flex-direction: column; gap: 10px; margin-bottom: 12px; }
+.more-list .btn { justify-content: flex-start; min-height: 64px; font-size: 1.1rem; gap: 14px; }
+.more-list .btn .ico { font-size: 1.6rem; }
+.more-list .btn[aria-current="page"] { border-color: var(--accent); background: var(--accent-soft); }
 .badge {
   position: absolute; top: 4px; right: calc(50% - 26px); background: var(--danger); color: #fff;
   border-radius: 999px; font-size: .7rem; min-width: 20px; height: 20px; padding: 0 5px; display: flex; align-items: center; justify-content: center; font-weight: 700;

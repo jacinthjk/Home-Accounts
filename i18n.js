@@ -719,6 +719,7 @@ window.HA_I18N = {
     "Delete the plan for all types of expense in {m}? Planned payments stay.": "{m} மாதத்தின் எல்லாச் செலவு வகைகளின் திட்டத்தையும் நீக்கவா? திட்டமிட்ட செலுத்துதல்கள் அப்படியே இருக்கும்.",
 
     // ---- Loans
+    "More": "மேலும்",
     "Loans": "கடன்கள்",
     "Loan repayment – {n}": "கடன் திருப்பிச் செலுத்துதல் – {n}",
     "Balance to repay: **{a}**": "செலுத்த வேண்டிய மீதி: **{a}**",

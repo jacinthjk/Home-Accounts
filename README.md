@@ -28,6 +28,8 @@ Open **<https://jacinthjk.github.io/Home-Accounts/>** on the phone, then install
 
 It gets its own icon, opens full-screen like any other app, and works without internet.
 
+On a phone, **Reports** and **Settings** are under the **☰ More** button at the bottom. Tablets and computers show them directly in the menu.
+
 ## Family sharing 👨‍👩‍👧
 Share one account book with your family. Everyone adds their own daily expenses from their own phone, with their own account. Changes show up on everyone's devices within seconds. The family's totals, budgets, warnings and reports include everyone.
 

@@ -1044,6 +1044,7 @@ function hardLock(msg) {
 function go(view) {
   S.ui.view = view;
   $$('.bottom-nav [data-nav]').forEach(b => { if (b.dataset.nav === view) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current'); });
+  if (view === 'reports' || view === 'settings') $('#navMore').setAttribute('aria-current', 'page'); else $('#navMore').removeAttribute('aria-current');
   $('#topTitle').textContent = t(TITLES[view]);
   render();
   window.scrollTo(0, 0);
@@ -1055,6 +1056,14 @@ function render() {
 }
 
 $$('.bottom-nav [data-nav]').forEach(b => { b.onclick = () => { if (b.dataset.nav === 'planner') S.ui.planMonth = null; go(b.dataset.nav); }; });
+$('#navMore').onclick = () => {
+  const item = (view, ico, label) => `<button class="btn block" data-more-to="${view}" ${S.ui.view === view ? 'aria-current="page"' : ''}><span class="ico" aria-hidden="true">${ico}</span>${esc(t(label))}</button>`;
+  modal(`<h3>${esc(t('More'))}</h3>
+    <div class="more-list">${item('reports', '📊', 'Reports')}${item('settings', '⚙️', 'Settings')}</div>
+    <div class="actions"><button class="btn" data-close>${esc(t('Close'))}</button></div>`, (box, close) => {
+    $$('[data-more-to]', box).forEach(b => { b.onclick = () => { close(); go(b.dataset.moreTo); }; });
+  });
+};
 $('#btnLock').onclick = () => lockApp(t('Your accounts are locked.'));
 $('#btnPrivacy').onclick = () => { writePrefs({ privacy: !readPrefs().privacy }); applyPrefs(); };
 $('#btnLang').onclick = () => setLang(LANG === 'ta' ? 'en' : 'ta');
