@@ -283,6 +283,7 @@ function defaultData(name, curCode) {
     ledger: {},
     income: [],
     plans: {},
+    loans: [],
   };
 }
 function migrate(d) {
@@ -290,6 +291,7 @@ function migrate(d) {
   d.categories ||= DEFAULT_CATS.map(([id, n, icon]) => ({ id, name: n, icon, budget: 0 }));
   if (!d.categories.some(c => c.id === 'other')) d.categories.push({ id: 'other', name: 'Others', icon: '📦', budget: 0 });
   d.items ||= []; d.ledger ||= {}; d.income ||= [];
+  d.loans ||= []; // loans: [{ id, type, name, amount, date, note, payments: {id: {amount, date, note, ldate, lkey}} }]
   d.plans ||= {}; // month plans: { 'YYYY-MM': { income, cats: {catId: amount}, note, items: {id: planned payment} } }
   // v1 -> v2: add units. The amount of every saved entry stays exactly the same.
   const addUnit = x => {
@@ -612,12 +614,14 @@ function detachShared(d, keep) {
   if (!keep) {
     d.income = (d.income || []).filter(i => !i.by || i.by === me);
     for (const p of Object.values(d.plans || {})) for (const [id, it] of Object.entries(p.items || {})) if (it.by && it.by !== me) delete p.items[id];
+    d.loans = (d.loans || []).filter(l => !l.by || l.by === me);
   }
   delete d.sync;
 }
 const markMine = (d, id) => {
   for (const x of [...d.items, ...d.categories, ...d.income]) x.by = id;
   for (const p of Object.values(d.plans || {})) for (const it of Object.values(p.items || {})) it.by = id;
+  for (const l of d.loans || []) { l.by = id; for (const p of Object.values(l.payments || {})) p.by = id; }
 };
 
 /** Creates the account's own family book, key ring and profile, and this device's locked copy. Returns the recovery code. */
@@ -1013,7 +1017,7 @@ async function enterWithRaw(raw, v, password) {
 /* ---------------------------------------------------------------------
    App shell
    --------------------------------------------------------------------- */
-const TITLES = { home: 'Home Accounts', ledger: 'Daily Ledger', planner: 'Planner', income: 'Income', reports: 'Reports', settings: 'Settings' };
+const TITLES = { home: 'Home Accounts', ledger: 'Daily Ledger', planner: 'Planner', loans: 'Loans', income: 'Income', reports: 'Reports', settings: 'Settings' };
 function startApp() {
   L.classList.add('hidden'); L.innerHTML = '';
   $('#app').classList.remove('hidden');
@@ -1189,6 +1193,7 @@ function viewHome() {
   </div>
 
   ${homePlanCard(mk, st)}
+  ${homeLoanCard()}
 
   <div class="card">
     <h3>🔔 ${esc(t('Warnings & tips'))}</h3>
@@ -2624,17 +2629,24 @@ function viewPlanMonth(mk) {
 
   <div class="card"><h3>🎯 ${esc(t('Plan for each type of expense'))}</h3>
     ${manage ? '' : `<p class="small muted">🔒 ${esc(t('Only the owner or an editor can change the month plan.'))}</p>`}
-    ${S.data.categories.map(c => { const typed = +p.cats?.[c.id] || 0, inItems = itemsSum(mk, c.id), plan = planForCat(mk, c.id), spent = st.byCat[c.id] || 0; return `
-      <div class="plan-cat"><span class="emo" aria-hidden="true" style="font-size:1.4rem">${esc(c.icon)}</span>
-        <div style="min-width:0"><div class="t" style="font-weight:600">${esc(nm(c.name))}</div>
+    ${S.data.categories.map(c => { const typed = +p.cats?.[c.id] || 0, inItems = itemsSum(mk, c.id), plan = planForCat(mk, c.id), spent = st.byCat[c.id] || 0, n = nm(c.name); return `
+      <div class="plan-cat" data-plan-row="${esc(c.id)}"><span class="emo" aria-hidden="true" style="font-size:1.4rem">${esc(c.icon)}</span>
+        <div style="min-width:0"><div class="t" style="font-weight:600">${esc(n)}</div>
           <div class="small muted">${spent || plan ? th('Spent {a}', { a: M(spent) }) : ''}${inItems > typed ? ' · ' + th('includes {a} planned payments', { a: M(inItems) }) : ''}</div>
           ${plan ? progressHtml(spent, plan) : ''}</div>
-        <input class="input" inputmode="decimal" data-plancat="${esc(c.id)}" value="${typed || ''}" placeholder="${inItems ? esc(String(inItems)) : '0'}" aria-label="${esc(t('Plan for {c}', { c: nm(c.name) }))}" ${dis}>
+        <div class="plan-cat-side">
+          ${plan ? `<div class="plan-amt">${M(plan)}</div>` : ''}
+          ${manage ? `<div class="row plan-btns">
+            ${plan ? `<button class="btn sm" data-act="planCatEdit" data-id="${esc(c.id)}" aria-label="${esc(t('Edit the plan for {c}', { c: n }))}">✎</button>` : `<button class="btn sm" data-act="planCatEdit" data-id="${esc(c.id)}" aria-label="${esc(t('Plan for {c}', { c: n }))}">➕ ${esc(t('Plan'))}</button>`}
+            ${typed ? `<button class="btn sm danger" data-act="planCatDel" data-id="${esc(c.id)}" aria-label="${esc(t('Delete the plan for {c}', { c: n }))}">🗑</button>` : ''}
+          </div>` : ''}
+        </div>
       </div>`; }).join('')}
     <div class="grid-2" style="margin-top:12px">
       <button class="btn" data-act="planCopy" ${dis}>📋 ${esc(t("Copy last month's plan"))}</button>
       <button class="btn" data-act="planFill" ${dis}>🎯 ${esc(t('Use my usual budgets'))}</button>
     </div>
+    ${manage && Object.values(p.cats || {}).some(v => v > 0) ? `<button class="btn danger block" data-act="planCatClear" style="margin-top:10px">🗑 ${esc(t('Delete the plan for all types'))}</button>` : ''}
   </div>
   </div>
 
@@ -2652,12 +2664,6 @@ function viewPlanMonth(mk) {
 function wirePlanner(v) {
   const mk = S.ui.planMonth; if (!mk) return;
   const saved = () => { cleanupPlan(mk); persist(); scheduleAlertCheck(); };
-  $$('[data-plancat]', v).forEach(inp => { inp.onchange = () => {
-    const n = inp.value.trim() === '' ? 0 : num(inp.value);
-    if (!(n >= 0)) { toast(t('Please enter a valid amount'), '', 'warning'); return; }
-    const p = planOf(mk, true); if (n > 0) p.cats[inp.dataset.plancat] = round2(n); else delete p.cats[inp.dataset.plancat];
-    saved(); render();
-  }; });
   const inc = $('[data-planinc]', v);
   if (inc) inc.onchange = () => {
     const n = inc.value.trim() === '' ? 0 : num(inc.value);
@@ -2667,6 +2673,51 @@ function wirePlanner(v) {
   const note = $('[data-plannote]', v); let nt;
   if (note) note.oninput = () => { clearTimeout(nt); nt = setTimeout(() => { planOf(mk, true).note = note.value.trim(); saved(); }, 500); };
   $$('[data-plantick]', v).forEach(cb => { cb.onchange = () => togglePaid(mk, cb.dataset.plantick, cb.checked); });
+}
+
+/** Set or change the planned amount for one type of expense. */
+function planCatModal(mk, catId) {
+  if (!canManage()) return notAllowed();
+  const c = catInfo(catId), typed = +planOf(mk)?.cats?.[c.id] || 0, inItems = itemsSum(mk, c.id);
+  modal(`<h3>${esc(c.icon)} ${esc(nm(c.name))}</h3>
+    <p class="small muted" style="margin-top:-6px">${esc(fmtMonth(mk))}</p>
+    <form id="mf">
+      <label class="field"><span>${esc(t('Planned amount'))}</span><input class="input" name="amt" inputmode="decimal" value="${typed || ''}" placeholder="0" autofocus></label>
+      ${inItems ? `<p class="small muted">${th('Planned payments of {a} are in this type, so the plan will not show less than that.', { a: M(inItems) })}</p>` : ''}
+      <div class="error-msg" id="merr"></div>
+      <div class="actions">
+        ${typed ? `<button type="button" class="btn danger" data-del>🗑 ${esc(t('Delete'))}</button>` : `<button type="button" class="btn" data-close>${esc(t('Cancel'))}</button>`}
+        <button class="btn primary">${esc(t('Save'))}</button></div>
+    </form>`, (box, close) => {
+    const f = $('#mf', box);
+    $('[data-del]', box)?.addEventListener('click', () => { close(); planCatDelete(mk, c.id); });
+    f.onsubmit = ev => {
+      ev.preventDefault();
+      const n = f.amt.value.trim() === '' ? 0 : num(f.amt.value);
+      if (!(n >= 0)) { $('#merr', box).textContent = t('Please enter a valid amount'); return; }
+      const p = planOf(mk, true);
+      if (n > 0) p.cats[c.id] = round2(n); else delete p.cats[c.id];
+      cleanupPlan(mk); persist(); close(); render(); scheduleAlertCheck();
+      toast(t('✅ Saved'), nm(c.name));
+    };
+  });
+}
+async function planCatDelete(mk, catId) {
+  if (!canManage()) return notAllowed();
+  const c = catInfo(catId), p = planOf(mk);
+  if (!p?.cats?.[c.id]) return;
+  if (!(await confirmBox(t('Delete the plan for {c} in {m}? Planned payments stay.', { c: nm(c.name), m: fmtMonth(mk) }), t('Delete'), true))) return;
+  delete p.cats[c.id];
+  cleanupPlan(mk); persist(); render(); scheduleAlertCheck();
+  toast(t('✅ Deleted'), nm(c.name));
+}
+async function planCatClear(mk) {
+  if (!canManage()) return notAllowed();
+  const p = planOf(mk); if (!p) return;
+  if (!(await confirmBox(t('Delete the plan for all types of expense in {m}? Planned payments stay.', { m: fmtMonth(mk) }), t('Delete'), true))) return;
+  p.cats = {};
+  cleanupPlan(mk); persist(); render(); scheduleAlertCheck();
+  toast(t('✅ Deleted'));
 }
 
 /** Tick = paid: the payment is added to the daily ledger (on its due date, or today). Untick removes it again. */
@@ -2756,6 +2807,167 @@ function fillFromBudgets(mk) {
 }
 
 /* ---------------------------------------------------------------------
+   LOANS – money the family has to repay: to people, banks, jewel loans.
+   Each loan has its amount and date taken; the repaid amount and the
+   balance are worked out from its repayments. A repayment can also be
+   added to the daily ledger, so that it counts as spending.
+   --------------------------------------------------------------------- */
+const LOAN_TYPES = { person: ['👤', 'From a person'], bank: ['🏦', 'Bank loan'], jewel: ['💍', 'Jewel loan'], other: ['📄', 'Other loan'] };
+const loanType = k => LOAN_TYPES[k] || LOAN_TYPES.other;
+const loanPays = l => Object.entries(l.payments || {}).map(([id, p]) => ({ id, ...p })).sort((a, b) => b.date.localeCompare(a.date));
+const loanPaid = l => round2(Object.values(l.payments || {}).reduce((s, p) => s + (+p.amount || 0), 0));
+const loanBal = l => round2((+l.amount || 0) - loanPaid(l));
+const loanById = id => S.data.loans.find(l => l.id === id);
+
+function removePayLine(p) {
+  const day = p.ldate && S.data.ledger[p.ldate]; if (!day) return;
+  const k = Object.keys(day.lines).find(x => x === p.lkey || x.startsWith(p.lkey + '@'));
+  if (k) delete day.lines[k];
+  cleanupDay(p.ldate);
+}
+function addPayLine(l, p) {
+  const key = 'x_' + uid(), c = catInfo('other');
+  dayObj(p.date).lines[key] = { name: t('Loan repayment – {n}', { n: l.name }), icon: loanType(l.type)[0], cat: c.id, price: +p.amount, unit: 'each', qUnit: 'each', qty: 1 };
+  p.ldate = p.date; p.lkey = key;
+}
+
+function homeLoanCard() {
+  const open = S.data.loans.filter(l => loanBal(l) > 0);
+  if (!open.length) return '';
+  return `<div class="card"><h3>🏦 ${esc(t('Loans'))}</h3>
+    <p style="margin:0 0 10px">${th('Balance to repay: **{a}**', { a: M(open.reduce((s, l) => s + loanBal(l), 0)) })} <span class="small muted">· ${esc(plural(open.length, '{n} loan', '{n} loans'))}</span></p>
+    <button class="btn sm" data-act="nav" data-to="loans">🏦 ${esc(t('Open loans'))}</button></div>`;
+}
+
+function loanCard(l) {
+  const paid = loanPaid(l), bal = loanBal(l), [ico, typeName] = loanType(l.type), pays = loanPays(l);
+  const can = canEditBy(l.by), done = bal <= 0, pc = l.amount > 0 ? Math.min(100, paid / l.amount * 100) : 0;
+  return `<div class="card loan-card ${done ? 'closed' : ''}" data-loan="${esc(l.id)}">
+    <div class="row" style="align-items:flex-start">
+      <span class="emo" aria-hidden="true" style="font-size:1.7rem">${ico}</span>
+      <div style="flex:1;min-width:0"><div class="t loan-name">${esc(l.name)}</div>
+        <div class="small muted">${esc(t(typeName))} · ${esc(t('Taken on {d}', { d: fmtLoanDate(l.date) }))}${shared() && l.by && l.by !== myId() ? ` · 👤 ${esc(memberName(l.by))}` : ''}</div></div>
+      ${done ? `<span class="due paid">✅ ${esc(t('Fully repaid'))}</span>` : ''}
+    </div>
+    <div class="loan-figs">
+      <div><span class="small muted">${esc(t('Loan amount'))}</span><b>${M(l.amount)}</b></div>
+      <div><span class="small muted">${esc(t('Repaid'))}</span><b class="good-txt">${M(paid)}</b></div>
+      <div><span class="small muted">${esc(t('Balance to repay'))}</span><b class="${done ? 'good-txt' : 'bad-txt'}" data-bal>${M(bal)}</b></div>
+    </div>
+    <div class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(pc)}"><div style="width:${pc}%"></div></div>
+    ${l.note ? `<p class="small" style="margin:8px 0 0">🗒️ ${esc(l.note)}</p>` : ''}
+    ${can ? `<div class="grid-2" style="margin-top:10px">
+      ${done ? '' : `<button class="btn primary" data-act="loanPay" data-id="${esc(l.id)}">💸 ${esc(t('Add repayment'))}</button>`}
+      <button class="btn" data-act="loanEdit" data-id="${esc(l.id)}">✎ ${esc(t('Edit loan'))}</button></div>` : ''}
+    ${pays.length ? `<details class="tv"><summary>${esc(t('Repayments'))} (${pays.length})</summary>
+      ${pays.map(p => `<button class="list-row" data-act="payEdit" data-id="${esc(l.id)}" data-pay="${esc(p.id)}" ${rowBtn}>
+        <div class="main"><div class="t">${esc(fmtLoanDate(p.date))}</div>${p.note ? `<div class="small muted">${esc(p.note)}</div>` : ''}</div>
+        <div class="amt">${M(p.amount)}</div><span aria-hidden="true">✎</span></button>`).join('')}</details>` : ''}
+  </div>`;
+}
+const fmtLoanDate = k => pkey(k).toLocaleDateString(DLOC(), { day: 'numeric', month: 'short', year: 'numeric' });
+
+function viewLoans() {
+  const all = S.data.loans, total = round2(all.reduce((s, l) => s + (+l.amount || 0), 0));
+  const paid = round2(all.reduce((s, l) => s + loanPaid(l), 0));
+  const byDate = (a, b) => b.date.localeCompare(a.date);
+  const open = all.filter(l => loanBal(l) > 0).sort(byDate), closed = all.filter(l => loanBal(l) <= 0).sort(byDate);
+  return `
+  <div class="hero"><div class="k">${esc(t('Balance to repay'))}</div><div class="v">${M(total - paid)}</div>
+    <button class="btn" data-act="loanAdd">➕ ${esc(t('Add a loan'))}</button></div>
+  <div class="grid-2" style="margin-bottom:14px">
+    <div class="stat"><div class="k">📥 ${esc(t('Total borrowed'))}</div><div class="v">${M(total)}</div></div>
+    <div class="stat"><div class="k">✅ ${esc(t('Total repaid'))}</div><div class="v good">${M(paid)}</div></div>
+  </div>
+  ${all.length ? '' : `<div class="card"><div class="empty">${esc(t('No loans added yet. Add loans from people, banks or jewel loans to keep track of what is left to repay.'))}</div></div>`}
+  <div class="cards-2">${open.map(loanCard).join('')}</div>
+  ${closed.length ? `<h3>${esc(t('Fully repaid'))}</h3><div class="cards-2">${closed.map(loanCard).join('')}</div>` : ''}`;
+}
+
+function loanModal(l) {
+  if (l && !canEditBy(l.by)) return notAllowed(l.by);
+  const isNew = !l, cur0 = l || { type: 'person', name: '', amount: '', date: todayKey(), note: '' };
+  modal(`<h3>${isNew ? '➕ ' + esc(t('Add a loan')) : '✎ ' + esc(t('Edit loan'))}</h3>
+    <form id="mf">
+      <label class="field"><span>${esc(t('Type of loan'))}</span><select class="input" name="type">${Object.entries(LOAN_TYPES).map(([k, [i, n]]) => `<option value="${k}" ${k === cur0.type ? 'selected' : ''}>${i} ${esc(t(n))}</option>`).join('')}</select></label>
+      <label class="field"><span>${esc(t('Who is it from? (person or bank)'))}</span><input class="input" name="name" maxlength="60" value="${esc(cur0.name)}" placeholder="${esc(t('e.g. Ramesh, or State Bank'))}"></label>
+      <label class="field"><span>${esc(t('Loan amount'))}</span><input class="input" name="amount" inputmode="decimal" value="${esc(cur0.amount)}" placeholder="0"></label>
+      <label class="field"><span>${esc(t('Date the loan was taken'))}</span><input class="input" type="date" name="date" value="${esc(cur0.date)}"></label>
+      <label class="field"><span>${esc(t('Note (optional)'))}</span><input class="input" name="note" maxlength="120" value="${esc(cur0.note)}" placeholder="${esc(t('e.g. 12% interest, 2 bangles pledged'))}"></label>
+      <div class="error-msg" id="merr"></div>
+      <div class="actions">
+        ${isNew ? `<button type="button" class="btn" data-close>${esc(t('Cancel'))}</button>` : `<button type="button" class="btn danger" data-del>🗑 ${esc(t('Delete'))}</button>`}
+        <button class="btn primary">${esc(t('Save'))}</button></div>
+    </form>`, (box, close) => {
+    const f = $('#mf', box);
+    $('[data-del]', box)?.addEventListener('click', async () => {
+      close();
+      if (await confirmBox(t('Delete the loan from {n} and its repayment history? Repayments already in the daily ledger stay there.', { n: l.name }), t('Delete'), true)) {
+        S.data.loans = S.data.loans.filter(x => x.id !== l.id); persist(); render();
+        toast(t('✅ Deleted'), l.name);
+      }
+    });
+    f.onsubmit = ev => {
+      ev.preventDefault();
+      const name = f.name.value.trim(), amount = num(f.amount.value), date = f.date.value;
+      if (!name) { $('#merr', box).textContent = t('Please write who the loan is from.'); return; }
+      if (!(amount > 0)) { $('#merr', box).textContent = t('Please enter the amount.'); return; }
+      if (!date) { $('#merr', box).textContent = t('Please choose a date.'); return; }
+      if (l && amount < loanPaid(l)) { $('#merr', box).textContent = t('{a} is already repaid, so the loan cannot be less than that.', { a: money(loanPaid(l)) }); return; }
+      if (l && Object.values(l.payments || {}).some(p => p.date < date)) { $('#merr', box).textContent = t('A repayment is dated before this date. Please check the dates.'); return; }
+      const rec = { type: f.type.value, name, amount: round2(amount), date, note: f.note.value.trim() };
+      if (isNew) S.data.loans.push({ id: uid(), ...rec, payments: {}, by: myId() }); else Object.assign(l, rec);
+      persist(); close(); render();
+      toast(t('✅ Saved'), `${name} – ${money(amount)}`);
+    };
+  });
+}
+
+function payModal(l, payId) {
+  const p = payId ? l.payments[payId] : null;
+  if (!canEditBy(p ? p.by || l.by : l.by)) return notAllowed(l.by);
+  const room = round2(loanBal(l) + (p ? +p.amount : 0)); // the most this repayment can be
+  modal(`<h3>💸 ${esc(p ? t('Edit repayment') : t('Add repayment'))}</h3>
+    <p class="small muted" style="margin-top:-6px">${esc(l.name)} · ${th('Balance to repay: **{a}**', { a: M(loanBal(l)) })}</p>
+    <form id="mf">
+      <label class="field"><span>${esc(t('Amount repaid'))}</span><input class="input" name="amount" inputmode="decimal" value="${p ? esc(p.amount) : ''}" placeholder="0"></label>
+      <button type="button" class="btn sm" id="payAll" style="margin:-6px 0 14px">${th('Pay the full {a}', { a: M(room) })}</button>
+      <label class="field"><span>${esc(t('Date repaid'))}</span><input class="input" type="date" name="date" value="${esc(p ? p.date : todayKey())}"></label>
+      <label class="field"><span>${esc(t('Note (optional)'))}</span><input class="input" name="note" maxlength="80" value="${esc(p?.note || '')}"></label>
+      <label class="check"><input type="checkbox" name="ledger" ${!p || p.lkey ? 'checked' : ''}> ${esc(t('Also add it to the daily ledger as an expense'))}</label>
+      <div class="error-msg" id="merr"></div>
+      <div class="actions">
+        ${p ? `<button type="button" class="btn danger" data-del>🗑 ${esc(t('Delete'))}</button>` : `<button type="button" class="btn" data-close>${esc(t('Cancel'))}</button>`}
+        <button class="btn primary">${esc(t('Save'))}</button></div>
+    </form>`, (box, close) => {
+    const f = $('#mf', box);
+    $('#payAll', box).onclick = () => { f.amount.value = room; };
+    $('[data-del]', box)?.addEventListener('click', async () => {
+      close();
+      if (await confirmBox(t('Delete this repayment of {a}? The balance goes back up, and it is removed from the daily ledger too.', { a: money(p.amount) }), t('Delete'), true)) {
+        removePayLine(p); delete l.payments[payId]; persist(); render(); scheduleAlertCheck();
+        toast(t('✅ Deleted'), money(p.amount));
+      }
+    });
+    f.onsubmit = ev => {
+      ev.preventDefault();
+      const amount = num(f.amount.value), date = f.date.value;
+      if (!(amount > 0)) { $('#merr', box).textContent = t('Please enter the amount.'); return; }
+      if (amount > room) { $('#merr', box).textContent = t('That is more than the balance of {a}.', { a: money(room) }); return; }
+      if (!date) { $('#merr', box).textContent = t('Please choose a date.'); return; }
+      if (date < l.date) { $('#merr', box).textContent = t('This date is before the loan was taken ({d}).', { d: fmtLoanDate(l.date) }); return; }
+      const rec = p || (l.payments[uid()] = { by: myId() });
+      if (rec.lkey) removePayLine(rec);
+      Object.assign(rec, { amount: round2(amount), date, note: f.note.value.trim(), ldate: '', lkey: '' });
+      if (f.ledger.checked) addPayLine(l, rec);
+      persist(); close(); render(); scheduleAlertCheck();
+      const bal = loanBal(l);
+      toast(bal > 0 ? t('✅ Repayment saved') : t('🎉 Loan fully repaid!'), t('Balance to repay: {a}', { a: money(bal) }));
+    };
+  });
+}
+
+/* ---------------------------------------------------------------------
    FAMILY SHARING – live sync through the family's own Supabase project.
    Each record is encrypted with the family key (AES-256-GCM) on this device
    before it is sent; the cloud only ever stores scrambled text.
@@ -2814,6 +3026,11 @@ function recordsOf(d) {
     for (const [id, it] of Object.entries(p.items || {}))
       m.set(`Q|${mk}|${id}`, { name: it.name, amount: it.amount, cat: it.cat, day: it.day || 0, done: !!it.done, ldate: it.ldate || '', lkey: it.lkey || '' });
   }
+  for (const l of d.loans || []) {
+    m.set(`G|${l.id}`, { type: l.type, name: l.name, amount: l.amount, date: l.date, note: l.note || '' });
+    for (const [id, p] of Object.entries(l.payments || {}))
+      m.set(`H|${l.id}|${id}`, { amount: p.amount, date: p.date, note: p.note || '', ldate: p.ldate || '', lkey: p.lkey || '' });
+  }
   return m;
 }
 /** Puts one record received from the family into this device's data. */
@@ -2846,6 +3063,16 @@ function applyRecord(id, author, deleted, v) {
     if (deleted) delete day.lines[key];
     else day.lines[key] = { name: v.name, icon: v.icon, cat: v.cat, price: v.price, unit: v.unit, qUnit: v.qUnit || v.unit, qty: v.qty };
     cleanupDay(date);
+  } else if (kind === 'G') {
+    const i = d.loans.findIndex(x => x.id === p[1]);
+    if (deleted) { if (i >= 0) d.loans.splice(i, 1); return; }
+    const rec = { id: p[1], type: v.type, name: v.name, amount: v.amount, date: v.date, note: v.note || '', payments: d.loans[i]?.payments || {}, by: author };
+    if (i >= 0) d.loans[i] = rec; else d.loans.push(rec);
+  } else if (kind === 'H') {
+    const loan = d.loans.find(x => x.id === p[1]);
+    if (!loan) return; // its loan was deleted
+    if (deleted) delete loan.payments[p[2]];
+    else loan.payments[p[2]] = { amount: v.amount, date: v.date, note: v.note || '', ldate: v.ldate || '', lkey: v.lkey || '', by: author };
   } else if (kind === 'P' || kind === 'Q') {
     const mk = p[1], plan = (d.plans[mk] ||= { income: 0, cats: {}, note: '', items: {} });
     plan.items ||= {};
@@ -2996,7 +3223,7 @@ async function checkKeyring() {
   const kr = await openStr(S.dataKey, prof.keyring);
   if (kr.book === s.book) return false;
   const d = S.data;
-  Object.assign(d, { items: [], categories: [], ledger: {}, income: [], plans: {} });
+  Object.assign(d, { items: [], categories: [], ledger: {}, income: [], plans: {}, loans: [] });
   migrate(d);
   Object.assign(s, { book: kr.book, fk: kr.fk, creator: !!kr.creator, role: 'member', cursor: 0, snap: {}, members: {}, fresh: true });
   SYNC.key = await importDataKey(unb64(kr.fk));
@@ -3343,7 +3570,7 @@ let pendingInvite = null;
 /* ---------------------------------------------------------------------
    Views & actions registry
    --------------------------------------------------------------------- */
-const VIEWS = { home: viewHome, ledger: viewLedger, planner: viewPlanner, income: viewIncome, reports: viewReports, settings: viewSettings };
+const VIEWS = { home: viewHome, ledger: viewLedger, planner: viewPlanner, loans: viewLoans, income: viewIncome, reports: viewReports, settings: viewSettings };
 AFTER.planner = v => wirePlanner(v);
 const ACTIONS = {
   nav: el => go(el.dataset.to),
@@ -3392,6 +3619,13 @@ const ACTIONS = {
   planMonthNav: el => { S.ui.planMonth = addMonths(S.ui.planMonth, Number(el.dataset.d)); S.ui.year = +S.ui.planMonth.slice(0, 4); render(); },
   planAdd: () => planItemModal(S.ui.planMonth),
   planItem: el => planItemModal(S.ui.planMonth, el.dataset.id),
+  planCatEdit: el => planCatModal(S.ui.planMonth, el.dataset.id),
+  planCatDel: el => planCatDelete(S.ui.planMonth, el.dataset.id),
+  planCatClear: () => planCatClear(S.ui.planMonth),
+  loanAdd: () => loanModal(null),
+  loanEdit: el => loanModal(loanById(el.dataset.id)),
+  loanPay: el => payModal(loanById(el.dataset.id)),
+  payEdit: el => payModal(loanById(el.dataset.id), el.dataset.pay),
   planCopy: () => copyPlan(S.ui.planMonth),
   planFill: () => fillFromBudgets(S.ui.planMonth),
   familyJoin: () => joinModal(),

@@ -90,10 +90,18 @@ Tap **📅 Planner** in the menu.
 - **The year:** all 12 months are shown at once. Each month shows what you **planned** and what you **spent**, with a coloured bar, and any payments still to make or overdue. This month is highlighted. Use ◀ ▶ to change the year.
 - **Tap a month** to plan it in advance:
   - **Planned payments & purchases:** things to pay or buy that month, such as school fees, rent, a gas cylinder or festival shopping, with an optional due date. **Tick** one when it is paid and it is added to the daily ledger automatically. Untick it to take it back out.
-  - **Plan for each type of expense:** how much you want to spend on Groceries, Bills and so on. Planned payments count towards their type.
+  - **Plan for each type of expense:** how much you want to spend on Groceries, Bills and so on. Tap **➕ Plan** to set an amount, **✎** to change it and **🗑** to delete it. Planned payments count towards their type and stay when you delete a plan.
   - **Expected income** and **notes for the month** (for example "Diwali on the 8th").
   - **Copy last month's plan** or **Use my usual budgets** to fill it in quickly.
 - The app reminds you on **Home** when a planned payment is due in the next 3 days or is overdue, and warns you when you spend more than planned.
+
+## Loans 🏦
+Tap **🏦 Loans** in the menu to keep track of money you have to repay: to people, banks, jewel loans or anything else.
+- **Add a loan:** choose the type, who it is from, the amount and the date it was taken. You can add a note, such as the interest rate or what was pledged.
+- **Add repayment** each time you pay. The app shows the **loan amount, how much is repaid and the balance to repay** for each loan, plus the totals at the top. When the balance reaches zero the loan moves to **Fully repaid**.
+- A repayment is also added to the daily ledger as an expense, so your spending and savings stay correct. Untick the box if you do not want that.
+- Open **Repayments** under a loan to see the history. Tap one to change or delete it.
+- **Interest is not calculated.** The balance is simply the loan amount minus repayments. If interest adds to what you owe, use **Edit loan** to change the loan amount.
 
 ## Speak your expenses 🎤
 Tap **🎤 Speak your expenses** on the Daily Ledger, or **🎤 Speak** on Home, then just talk. For example:
