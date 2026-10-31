@@ -10,8 +10,7 @@
   <meta name="referrer" content="no-referrer">
   <meta name="description" content="Private home account book – daily expenses, income, savings and budget warnings. English and Tamil.">
   <!-- Phone app look -->
-  <meta name="theme-color" content="#0f7a5c" media="(prefers-color-scheme: light)">
-  <meta name="theme-color" content="#141413" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#0b0f08">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
@@ -38,14 +37,15 @@
     <main id="view" tabindex="-1"></main>
     <nav class="bottom-nav" aria-label="Main menu">
       <div class="nav-brand" aria-hidden="true">📒 <span data-i18n="Home Accounts">Home Accounts</span></div>
-      <button data-nav="home"><span class="ico">🏠</span><span class="nav-lbl" data-i18n="Home">Home</span><span class="badge hidden" id="alertBadge"></span></button>
-      <button data-nav="ledger"><span class="ico">📒</span><span class="nav-lbl" data-i18n="Daily Ledger">Daily Ledger</span></button>
-      <button data-nav="planner"><span class="ico">📅</span><span class="nav-lbl" data-i18n="Planner">Planner</span></button>
-      <button data-nav="loans"><span class="ico">🏦</span><span class="nav-lbl" data-i18n="Loans">Loans</span></button>
-      <button data-nav="income"><span class="ico">💰</span><span class="nav-lbl" data-i18n="Income">Income</span></button>
-      <button data-nav="reports"><span class="ico">📊</span><span class="nav-lbl" data-i18n="Reports">Reports</span></button>
-      <button data-nav="settings"><span class="ico">⚙️</span><span class="nav-lbl" data-i18n="Settings">Settings</span></button>
-      <button class="nav-more" id="navMore" aria-haspopup="dialog"><span class="ico">☰</span><span class="nav-lbl" data-i18n="More">More</span></button>
+      <button data-nav="home"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11 12 3l9 8"/><path d="M5 10v10h14V10"/><path d="M10 20v-6h4v6"/></svg></span><span class="nav-lbl" data-i18n="Home">Home</span><span class="badge hidden" id="alertBadge"></span></button>
+      <button data-nav="ledger"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 4a2 2 0 0 1 2-2h12v20H7a2 2 0 0 1-2-2z"/><path d="M9 7h6M9 11h6M9 15h3"/></svg></span><span class="nav-lbl" data-i18n="Daily Ledger">Daily Ledger</span></button>
+      <button class="nav-add" id="navAdd" aria-haspopup="dialog"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></span><span class="nav-lbl" data-i18n="Add">Add</span></button>
+      <button data-nav="planner"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M3 10h18M8 3v4M16 3v4"/></svg></span><span class="nav-lbl" data-i18n="Planner">Planner</span></button>
+      <button data-nav="loans"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 10 12 4l9 6"/><path d="M5 10v8M10 10v8M14 10v8M19 10v8M3 20h18"/></svg></span><span class="nav-lbl" data-i18n="Loans">Loans</span></button>
+      <button data-nav="income"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="6" width="18" height="14" rx="3"/><path d="M16 13h2M3 10h18"/></svg></span><span class="nav-lbl" data-i18n="Income">Income</span></button>
+      <button data-nav="reports"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20V10M10 20V4M16 20v-7M21 20H3"/></svg></span><span class="nav-lbl" data-i18n="Reports">Reports</span></button>
+      <button data-nav="settings"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M19 5l-2 2M7 17l-2 2"/></svg></span><span class="nav-lbl" data-i18n="Settings">Settings</span></button>
+      <button class="nav-more" id="navMore" aria-haspopup="dialog"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg></span><span class="nav-lbl" data-i18n="More">More</span></button>
     </nav>
   </div>
 

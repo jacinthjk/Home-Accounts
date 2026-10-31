@@ -76,7 +76,7 @@ window.HA_I18N = {
 
   // Short words for the bottom menu on phones
   menu: {
-    "Home": "முகப்பு", "Daily Ledger": "கணக்கு", "Planner": "திட்டம்", "Loans": "கடன்", "Income": "வரவு", "Reports": "விவரம்", "Settings": "அமைப்பு",
+    "Home": "முகப்பு", "Daily Ledger": "கணக்கு", "Planner": "திட்டம்", "Loans": "கடன்", "Income": "வரவு", "Reports": "விவரம்", "Settings": "அமைப்பு", "Add": "சேர்",
   },
 
   units: {
@@ -857,5 +857,26 @@ window.HA_I18N = {
     "Talk about money at home. A goal the family shares is easier to reach.": "வீட்டில் பணத்தைப் பற்றிப் பேசுங்கள். குடும்பம் பகிரும் இலக்கை அடைவது எளிது.",
     "Living below your income builds more wealth than a big income does.": "பெரிய வருமானத்தை விட, வருமானத்துக்குக் குறைவாக வாழ்வதே அதிகச் செல்வம் சேர்க்கும்.",
     "Wait one day before a big unplanned purchase. Quick decisions often cost more.": "திட்டமிடாத பெரிய செலவுக்கு முன் ஒரு நாள் காத்திருங்கள். அவசர முடிவுகள் பெரும்பாலும் அதிகம் செலவாகும்.",
+
+    // ---- New look
+    "Spending is up compared with this time last month": "கடந்த மாதம் இதே நேரத்தை விடச் செலவு கூடியுள்ளது",
+    "Spending is down compared with this time last month": "கடந்த மாதம் இதே நேரத்தை விடச் செலவு குறைந்துள்ளது",
+    "Latest expenses": "சமீபத்திய செலவுகள்",
+    "See all": "அனைத்தும்",
+    "Spending envelopes": "செலவு உறைகள்",
+
+    // ---- Bank SMS
+    "Add from bank SMS": "வங்கி SMS-லிருந்து சேர்",
+    "Copy your bank messages and paste them here. A web app cannot open your messages by itself. You check everything before it is added.": "உங்கள் வங்கிச் செய்திகளை நகலெடுத்து இங்கே ஒட்டுங்கள். இணையச் செயலி உங்கள் செய்திகளைத் தானாகத் திறக்க முடியாது. சேர்ப்பதற்கு முன் அனைத்தையும் நீங்களே சரிபார்க்கலாம்.",
+    "Bank messages": "வங்கிச் செய்திகள்",
+    "Read only on this device. The messages are not saved or sent anywhere, and one-time passwords (OTP) are skipped.": "இந்தக் கருவியில் மட்டுமே படிக்கப்படும். செய்திகள் எங்கும் சேமிக்கப்படுவதோ அனுப்பப்படுவதோ இல்லை; ஒருமுறை கடவுச்சொற்கள் (OTP) தவிர்க்கப்படும்.",
+    "Find transactions": "பரிவர்த்தனைகளைக் கண்டறி",
+    "No completed payments found in these messages.": "இந்தச் செய்திகளில் முடிந்த பணப் பரிவர்த்தனை எதுவும் இல்லை.",
+    "Check before adding": "சேர்க்கும் முன் சரிபாருங்கள்",
+    "{n} ignored: OTPs, offers, or payments not completed.": "{n} தவிர்க்கப்பட்டன: OTP, சலுகைகள் அல்லது முடியாத பரிவர்த்தனைகள்.",
+    "Already added": "ஏற்கனவே சேர்க்கப்பட்டது",
+    "Please tick at least one.": "குறைந்தது ஒன்றையாவது தேர்ந்தெடுங்கள்.",
+    "{n} transaction": "{n} பரிவர்த்தனை",
+    "{n} transactions": "{n} பரிவர்த்தனைகள்",
   },
 };

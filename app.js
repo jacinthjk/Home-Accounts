@@ -197,8 +197,7 @@ window.addEventListener('pagehide', () => { if (saveTimer) flush(); });
 function applyPrefs() {
   const p = readPrefs();
   document.documentElement.style.fontSize = `${17 * (p.fontScale || 1)}px`;
-  if (p.theme === 'light' || p.theme === 'dark') document.documentElement.dataset.theme = p.theme;
-  else delete document.documentElement.dataset.theme;
+  document.documentElement.dataset.theme = p.theme || 'dark';
   document.body.classList.toggle('privacy', !!p.privacy && !!S.dataKey);
   const b = $('#btnPrivacy');
   if (b) { b.setAttribute('aria-pressed', String(!!p.privacy)); b.innerHTML = p.privacy ? `🙈<span class="lbl">${esc(t('Show'))}</span>` : `👁️<span class="lbl">${esc(t('Hide'))}</span>`; }
@@ -1086,7 +1085,7 @@ function hardLock(msg) {
 function go(view) {
   S.ui.view = view;
   $$('.bottom-nav [data-nav]').forEach(b => { if (b.dataset.nav === view) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current'); });
-  if (view === 'reports' || view === 'settings') $('#navMore').setAttribute('aria-current', 'page'); else $('#navMore').removeAttribute('aria-current');
+  if (['loans', 'income', 'reports', 'settings'].includes(view)) $('#navMore').setAttribute('aria-current', 'page'); else $('#navMore').removeAttribute('aria-current');
   $('#topTitle').textContent = t(TITLES[view]);
   render();
   window.scrollTo(0, 0);
@@ -1101,9 +1100,26 @@ $$('.bottom-nav [data-nav]').forEach(b => { b.onclick = () => { if (b.dataset.na
 $('#navMore').onclick = () => {
   const item = (view, ico, label) => `<button class="btn block" data-more-to="${view}" ${S.ui.view === view ? 'aria-current="page"' : ''}><span class="ico" aria-hidden="true">${ico}</span>${esc(t(label))}</button>`;
   modal(`<h3>${esc(t('More'))}</h3>
-    <div class="more-list">${item('reports', '📊', 'Reports')}${item('settings', '⚙️', 'Settings')}</div>
+    <div class="more-list">${item('loans', '🏦', 'Loans')}${item('income', '💰', 'Income')}${item('reports', '📊', 'Reports')}${item('settings', '⚙️', 'Settings')}</div>
     <div class="actions"><button class="btn" data-close>${esc(t('Close'))}</button></div>`, (box, close) => {
     $$('[data-more-to]', box).forEach(b => { b.onclick = () => { close(); go(b.dataset.moreTo); }; });
+  });
+};
+$('#navAdd').onclick = () => {
+  const item = (key, ico, label) => `<button class="btn block" data-add="${key}"><span class="ico" aria-hidden="true">${ico}</span>${esc(t(label))}</button>`;
+  modal(`<h3>${esc(t('Add'))}</h3>
+    <div class="more-list">${item('day', '✏️', "Add today's expenses")}${item('voice', '🎤', 'Speak')}${item('other', '➕', 'Other expense (one time)')}${item('income', '💰', 'Add income')}${item('sms', '📩', 'Add from bank SMS')}</div>
+    <div class="actions"><button class="btn" data-close>${esc(t('Close'))}</button></div>`, (box, close) => {
+    $$('[data-add]', box).forEach(b => { b.onclick = () => {
+      close();
+      const k = b.dataset.add;
+      if (k === 'income') { go('income'); incomeModal(null); return; }
+      if (k === 'sms') { smsModal(); return; }
+      S.ui.date = todayKey(); S.ui.filter = 'all'; S.ui.q = '';
+      if (k === 'voice') { voiceModal(); return; }
+      go('ledger');
+      if (k === 'other') customExpenseModal();
+    }; });
   });
 };
 $('#btnLock').onclick = () => lockApp(t('Your accounts are locked.'));
@@ -1304,6 +1320,51 @@ function tipCard() {
   return `<div class="card"><h3>💡 ${esc(t("Today's money idea"))}</h3><p style="margin:0 0 6px">${esc(t(tip))}</p>
     <p class="small muted" style="margin:0">${esc(t('Idea from: {b}', { b: book }))}</p></div>`;
 }
+const quickAction = (attrs, icon, label) => `<button class="qa" ${attrs}><span class="tile"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${icon}</svg></span>${esc(t(label))}</button>`;
+/** This month so far against the same days of last month. */
+function compareBanner(mk, tk) {
+  const prev = addMonths(mk, -1), day = Math.min(pkey(tk).getDate(), daysInMonth(prev));
+  const now = catTotals(`${mk}-01`, tk).total, was = catTotals(`${prev}-01`, `${prev}-${pad(day)}`).total;
+  if (!(was > 0)) return '';
+  const d = (now - was) / was * 100;
+  if (Math.abs(d) < 1) return '';
+  return `<button class="compare" data-act="nav" data-to="reports"><span class="big">${d > 0 ? '▲' : '▼'} ${pct(Math.abs(d))}</span>
+    <span class="why">${esc(t(d > 0 ? 'Spending is up compared with this time last month' : 'Spending is down compared with this time last month'))}</span><span aria-hidden="true">›</span></button>`;
+}
+/** The newest expenses, with the last seven days folded under them. */
+function latestCard(tk, days, maxDay) {
+  const rows = [];
+  for (const k of Object.keys(S.data.ledger).filter(d => d <= tk).sort().reverse()) {
+    for (const l of Object.values(S.data.ledger[k].lines)) rows.push([k, l]);
+    if (rows.length >= 5) break;
+  }
+  return `<div class="card">
+    <div class="card-head"><h3>🧾 ${esc(t('Latest expenses'))}</h3><button class="link-btn small" data-act="nav" data-to="ledger">${esc(t('See all'))}</button></div>
+    ${rows.length ? rows.slice(0, 5).map(([k, l]) => `<button class="list-row" data-act="openDay" data-date="${k}" ${rowBtn}>
+      <span class="emo" aria-hidden="true">${esc(l.icon || '🛍️')}</span>
+      <div class="main"><div class="t">${esc(nm(l.name))}</div><div class="small muted">${esc(k === tk ? t('Today') : fmtShort(k))} · ${esc(nm(catInfo(l.cat).name))}</div></div>
+      <div class="amt">${M(lineAmt(l))}</div></button>`).join('')
+      : `<div class="empty">${esc(t('No spending recorded this month yet.'))}</div>`}
+    <details class="tv"><summary>📅 ${esc(t('Last 7 days'))}</summary>
+    ${days.map(k => { const v = dayTotal(k); return `
+      <button class="list-row" data-act="openDay" data-date="${k}" ${rowBtn}>
+        <div class="main"><div class="t">${k === tk ? esc(t('Today')) : esc(fmtShort(k))}</div>
+        ${v > 0 && maxDay > 0 ? `<div style="height:8px;background:var(--surface-2);border-radius:4px;margin-top:6px;overflow:hidden"><div style="height:100%;width:${Math.min(100, v / Math.max(maxDay, v) * 100)}%;background:var(--series-1);border-radius:0 4px 4px 0"></div></div>` : ''}</div>
+        <div class="amt">${v > 0 ? M(v) : '<span class="muted">—</span>'}</div><span aria-hidden="true">›</span></button>`; }).join('')}
+    </details>
+  </div>`;
+}
+/** Each type of expense with a limit works like an envelope of money: what is left in it? */
+function envelopeCard(st) {
+  const cats = S.data.categories.filter(c => c.budget > 0);
+  if (!cats.length) return '';
+  return `<div class="card"><h3>✉️ ${esc(t('Spending envelopes'))}</h3>
+    ${cats.map(c => { const s = st.byCat[c.id] || 0; return `<div style="margin-bottom:12px">
+      <div class="row" style="margin-bottom:6px"><span style="flex:1;min-width:0">${esc(c.icon)} ${esc(nm(c.name))}</span>
+      <b style="white-space:nowrap">${s <= c.budget ? th('{a} left', { a: M(c.budget - s) }) : `<span style="color:var(--danger)">${th('{a} over', { a: M(s - c.budget) })}</span>`}</b></div>
+      ${progressHtml(s, c.budget)}</div>`; }).join('')}
+  </div>`;
+}
 function homeSavingCard(mk, st) {
   const sp = savingPlan(mk, st), head = `<h3>🏦 ${esc(t('Saving goal'))}</h3>`;
   if (!sp.pc) return `<div class="card">${head}<p class="muted" style="margin:0 0 10px">${esc(t('Decide first how much to save each month. The app then shows what you can spend.'))}</p>
@@ -1337,8 +1398,12 @@ function viewHome() {
   <div class="hero">
     <div class="k">${esc(t('Spent today'))} · ${esc(fmtShort(tk))}</div>
     <div class="v">${M(dayTotal(tk))}</div>
-    <div class="row wrap"><button class="btn" data-act="openDay" data-date="${tk}">✏️ ${esc(t("Add today's expenses"))}</button>
-    <button class="btn" data-act="voice">🎤 ${esc(t('Speak'))}</button></div>
+    <div class="hero-actions">
+      ${quickAction(`data-act="openDay" data-date="${tk}"`, '<path d="M12 5v14M5 12h14"/>', 'Add')}
+      ${quickAction('data-act="voice"', '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>', 'Speak')}
+      ${quickAction('data-act="nav" data-to="income"', '<rect x="3" y="6" width="18" height="14" rx="3"/><path d="M16 13h2M3 10h18"/>', 'Income')}
+      ${quickAction(`data-act="openPlan" data-m="${mk}"`, '<rect x="3" y="5" width="18" height="16" rx="3"/><path d="M3 10h18M8 3v4M16 3v4"/>', 'Planner')}
+    </div>
   </div>
   <div>
   <h3>${esc(fmtMonth(mk))}</h3>
@@ -1351,6 +1416,7 @@ function viewHome() {
   </div>
   </div>
   </div>
+  ${compareBanner(mk, tk)}
 
   <div class="cards-2">
   ${homeSavingCard(mk, st)}
@@ -1360,6 +1426,9 @@ function viewHome() {
     ${alerts.length ? alerts.slice(0, 3).map(alertHtml).join('') : `<div class="empty">✅ ${esc(t('All good! No warnings right now.'))}</div>`}
     ${alerts.length > 3 ? `<details class="tv"><summary>${esc(t('Show {n} more', { n: alerts.length - 3 }))}</summary>${alerts.slice(3).map(alertHtml).join('')}</details>` : ''}
   </div>
+
+  ${latestCard(tk, days, maxDay)}
+  ${envelopeCard(st)}
 
   <div class="card">
     <h3>🎯 ${esc(t('Monthly budget'))}</h3>
@@ -1386,15 +1455,6 @@ function viewHome() {
   </div>
 
   ${tipCard()}
-
-  <div class="card">
-    <h3>📅 ${esc(t('Last 7 days'))}</h3>
-    ${days.map(k => { const v = dayTotal(k); return `
-      <button class="list-row" data-act="openDay" data-date="${k}" ${rowBtn}>
-        <div class="main"><div class="t">${k === tk ? esc(t('Today')) : esc(fmtShort(k))}</div>
-        ${v > 0 && maxDay > 0 ? `<div style="height:8px;background:var(--surface-2);border-radius:4px;margin-top:6px;overflow:hidden"><div style="height:100%;width:${Math.min(100, v / Math.max(maxDay, v) * 100)}%;background:var(--series-1);border-radius:0 4px 4px 0"></div></div>` : ''}</div>
-        <div class="amt">${v > 0 ? M(v) : '<span class="muted">—</span>'}</div><span aria-hidden="true">›</span></button>`; }).join('')}
-  </div>
   </div>`;
 }
 
@@ -1495,6 +1555,7 @@ function viewLedger() {
 
   <div class="grid-2" style="margin-top:14px">
     <button class="btn" data-act="customExpense">➕ ${esc(t('Other expense (one time)'))}</button>
+    <button class="btn" data-act="smsImport">📩 ${esc(t('Add from bank SMS'))}</button>
     <button class="btn" data-act="newItem">🆕 ${esc(t('Add new item to list'))}</button>
   </div>
   <button class="btn block" data-act="repeatDay" style="margin-top:10px">🔁 ${esc(t('Copy items from an earlier day'))}</button>
@@ -1651,6 +1712,130 @@ function customExpenseModal() {
       dayObj(k).lines[id] = { name, icon, cat, price: amt, unit: 'each', qUnit: 'each', qty: 1 };
       persist(); close(); render(); scheduleAlertCheck();
       toast(t('✅ Added'), `${name} – ${money(amt)}`);
+    };
+  });
+}
+
+/* ---------------------------------------------------------------------
+   Bank SMS. A web app cannot read a phone's messages, so the person pastes the ones they choose.
+   Everything happens on this device. Only the amount, date and name are kept, after review:
+   the message itself is never saved, and one-time passwords are skipped without being used.
+   --------------------------------------------------------------------- */
+const SMS_SECRET = /\b(otp|one[- ]time|verification code|cvv|password|passcode)\b/i;
+const SMS_NOT_DONE = /\b(will be|to be|is due|due on|due date|requested|request|failed|declined|unsuccessful|pre-?approved|eligible|offer|statement)\b/i;
+const SMS_OUT = /\b(debited|spent|paid|withdrawn|purchased?|sent|dr)\b/i, SMS_IN = /\b(credited|received|deposited|refund(ed)?|cr)\b/i;
+const SMS_CATS = [
+  ['eat', /swiggy|zomato|restaurant|cafe|bakery|domino|hotel/i],
+  ['groc', /bigbasket|blinkit|zepto|dmart|bazaar|grocer|supermarket|mart\b/i],
+  ['travel', /\buber\b|\bola\b|rapido|petrol|fuel|irctc|redbus|hpcl|bpcl|iocl|metro/i],
+  ['bills', /electric|tneb|airtel|\bjio\b|vodafone|bsnl|recharge|broadband|\bgas\b|\bdth\b/i],
+  ['health', /pharmacy|apollo|medplus|hospital|clinic|\blab\b/i],
+  ['edu', /school|college|tuition/i],
+  ['cloth', /myntra|ajio|trends/i],
+];
+function smsAmount(s) {
+  for (const m of s.matchAll(/(?:rs\.?|inr|₹)\s*([\d,]+(?:\.\d{1,2})?)|([\d,]+(?:\.\d{1,2})?)\s*(?:rs\b|inr\b)/gi)) {
+    if (/(bal(ance)?|limit|lmt)\W*(is\W*|of\W*)?$/i.test(s.slice(Math.max(0, m.index - 24), m.index))) continue; // what is left in the account
+    const n = num(m[1] ?? m[2]);
+    if (n > 0) return round2(n);
+  }
+  return 0;
+}
+function smsDate(s, tk) {
+  const ok = (y, mo, d) => {
+    const yy = y === undefined ? +tk.slice(0, 4) : +y < 100 ? 2000 + +y : +y;
+    let k = yy + '-' + pad(+mo) + '-' + pad(+d);
+    if (y === undefined && k > tk) k = (yy - 1) + k.slice(4); // no year given: the latest such date so far
+    const p = pkey(k);
+    return p.getMonth() + 1 === +mo && p.getDate() === +d && k <= tk ? k : '';
+  };
+  let m = s.match(/\b(20\d\d)-(\d{2})-(\d{2})\b/);
+  if (m && ok(m[1], m[2], m[3])) return ok(m[1], m[2], m[3]);
+  m = s.match(/\b(\d{1,2})[-\/.](\d{1,2})[-\/.](\d{2,4})\b/);
+  if (m && ok(m[3], m[2], m[1])) return ok(m[3], m[2], m[1]);
+  for (const x of s.matchAll(/\b(\d{1,2})[- ]?([a-z]{3})[a-z]*(?:[-, ]+(\d{4}|\d{2})(?![:\d]))?/gi)) {
+    const mo = 'janfebmaraprmayjunjulaugsepoctnovdec'.indexOf(x[2].toLowerCase());
+    if (mo >= 0 && mo % 3 === 0 && ok(x[3], mo / 3 + 1, x[1])) return ok(x[3], mo / 3 + 1, x[1]);
+  }
+  return tk;
+}
+function smsParty(s, out) {
+  const clean = v => v.split(/\s+(?:on|ref|upi|via|using|with|thru|through|avl|bal|not|from|date|txn)\b|[.;]\s|[.;]$/i)[0].replace(/@.*/, '').trim();
+  const usable = v => v.length >= 2 && !/^(a\/?c|ac|acct|account|your|you|the|card|bank|x+\d*|\d|rs\b|inr\b)/i.test(v);
+  if (out) { const m = s.match(/;\s*([a-z][\w &.]{1,30}?)\s+credited/i); if (m && usable(m[1].trim())) return m[1].trim(); }
+  const re = out ? /\b(?:at|to|towards|for)\s+(?:vpa\s+)?([a-z0-9][\w&.'@ -]{1,40})/gi : /\b(?:from|by)\s+(?:vpa\s+|neft\s+from\s+|imps\s+from\s+)?([a-z0-9][\w&.'@ -]{1,40})/gi;
+  for (const m of s.matchAll(re)) { const v = clean(m[1]); if (usable(v)) return v; }
+  return '';
+}
+/** Finds completed payments and receipts in pasted messages. Returns { found, ignored }. */
+function parseBankSms(text, tk = todayKey()) {
+  const hash = s => { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return (h >>> 0).toString(16); };
+  const isMoney = l => smsAmount(l) > 0 && (SMS_OUT.test(l) || SMS_IN.test(l));
+  const msgs = [];
+  for (const block of String(text).split(/\n\s*\n/)) {
+    const lines = block.split('\n').map(l => l.trim()).filter(Boolean);
+    if (lines.filter(isMoney).length > 1) msgs.push(...lines); else if (lines.length) msgs.push(lines.join(' '));
+  }
+  const found = [], seen = new Set(); let ignored = 0;
+  for (const s of msgs) {
+    const out = s.search(SMS_OUT), inn = s.search(SMS_IN), amount = smsAmount(s);
+    if (SMS_SECRET.test(s) || SMS_NOT_DONE.test(s) || !amount || (out < 0 && inn < 0)) { ignored++; continue; }
+    const id = hash(s.replace(/\s+/g, ' ').toLowerCase());
+    if (seen.has(id)) continue;
+    seen.add(id);
+    const isOut = out >= 0 && (inn < 0 || out < inn), name = smsParty(s, isOut);
+    found.push({ id, kind: isOut ? 'out' : 'in', amount, date: smsDate(s, tk), name,
+      cat: isOut ? (SMS_CATS.find(([, re]) => re.test(name || s))?.[0] || 'other') : '',
+      source: /salary/i.test(s) ? 'Salary' : /interest/i.test(s) ? 'Interest / Savings' : 'Other' });
+  }
+  return { found, ignored };
+}
+function smsModal() {
+  modal(`<h3>📩 ${esc(t('Add from bank SMS'))}</h3>
+    <p class="small muted">${esc(t('Copy your bank messages and paste them here. A web app cannot open your messages by itself. You check everything before it is added.'))}</p>
+    <form id="mf"><label class="field"><span>${esc(t('Bank messages'))}</span><textarea class="input" name="sms" rows="7" autocomplete="off" autocorrect="off" spellcheck="false"></textarea></label>
+      <p class="small muted">🔐 ${esc(t('Read only on this device. The messages are not saved or sent anywhere, and one-time passwords (OTP) are skipped.'))}</p>
+      <div class="error-msg" id="merr"></div>
+      <div class="actions"><button type="button" class="btn" data-close>${esc(t('Cancel'))}</button><button class="btn primary">${esc(t('Find transactions'))}</button></div></form>`, box => {
+    const f = $('#mf', box);
+    f.onsubmit = ev => {
+      ev.preventDefault();
+      const r = parseBankSms(f.sms.value);
+      if (!r.found.length) { $('#merr', box).textContent = t('No completed payments found in these messages.'); return; }
+      smsReview(r);
+    };
+  });
+}
+function smsReview({ found, ignored }) {
+  const already = x => (x.kind === 'out' ? !!S.data.ledger[x.date]?.lines['x_sms_' + x.id] : S.data.income.some(i => i.id === 'sms_' + x.id));
+  modal(`<h3>📩 ${esc(t('Check before adding'))}</h3>
+    ${ignored ? `<p class="small muted">${esc(t('{n} ignored: OTPs, offers, or payments not completed.', { n: ignored }))}</p>` : ''}
+    <form id="mf">${found.map((x, i) => { const dup = already(x); return `<div class="v-row sms-row" data-i="${i}">
+      <label class="v-top"><input type="checkbox" name="on" ${dup ? '' : 'checked'}> <b>${x.kind === 'out' ? '🧾 ' + esc(t('Expense')) : '💰 ' + esc(t('Income'))}</b>${dup ? ` <span class="small muted">· ${esc(t('Already added'))}</span>` : ''}</label>
+      <div class="sms-fields">
+        <input class="input sms-name" name="name" maxlength="60" value="${esc(x.name)}" placeholder="${esc(t(x.kind === 'out' ? 'What did you spend on?' : 'Note (optional)'))}" aria-label="${esc(t(x.kind === 'out' ? 'What did you spend on?' : 'Note (optional)'))}">
+        <input class="input" name="amount" inputmode="decimal" value="${x.amount}" aria-label="${esc(t('Amount'))}">
+        <input class="input" type="date" name="date" value="${esc(x.date)}" aria-label="${esc(t('Date'))}">
+        ${x.kind === 'out' ? `<select class="input sms-name" name="cat" aria-label="${esc(t('Type of expense'))}">${catOptions(catInfo(x.cat).id)}</select>`
+          : `<select class="input sms-name" name="source" aria-label="${esc(t('Source'))}">${INCOME_SOURCES.map(s => `<option value="${esc(s)}" ${s === x.source ? 'selected' : ''}>${esc(nm(s))}</option>`).join('')}</select>`}
+      </div></div>`; }).join('')}
+      <div class="error-msg" id="merr"></div>
+      <div class="actions"><button type="button" class="btn" data-close>${esc(t('Cancel'))}</button><button class="btn primary">${esc(t('Add'))}</button></div></form>`, (box, close) => {
+    $('#mf', box).onsubmit = ev => {
+      ev.preventDefault();
+      const picked = $$('.sms-row', box).filter(r => r.querySelector('[name=on]').checked);
+      if (!picked.length) { $('#merr', box).textContent = t('Please tick at least one.'); return; }
+      const read = r => ({ x: found[+r.dataset.i], name: r.querySelector('[name=name]').value.trim(), amount: num(r.querySelector('[name=amount]').value), date: r.querySelector('[name=date]').value, sel: r.querySelector('select').value });
+      const rows = picked.map(read);
+      if (rows.some(o => !(o.amount > 0))) { $('#merr', box).textContent = t('Please enter the amount.'); return; }
+      if (rows.some(o => !o.date)) { $('#merr', box).textContent = t('Please choose a date.'); return; }
+      if (rows.some(o => o.x.kind === 'out' && !o.name)) { $('#merr', box).textContent = t('Please write what you spent on.'); return; }
+      for (const { x, name, amount, date, sel } of rows) {
+        if (x.kind === 'out') dayObj(date).lines['x_sms_' + x.id] = { name, icon: catInfo(sel).icon, cat: sel, price: round2(amount), unit: 'each', qUnit: 'each', qty: 1 };
+        else if (!S.data.income.some(i => i.id === 'sms_' + x.id)) S.data.income.push({ id: 'sms_' + x.id, date, source: sel, amount: round2(amount), note: name, by: myId() });
+      }
+      persist(); close(); render(); scheduleAlertCheck();
+      toast(t('✅ Added'), plural(rows.length, '{n} transaction', '{n} transactions'));
     };
   });
 }
@@ -1986,7 +2171,7 @@ function installCard() {
 }
 function viewSettings() {
   const s = S.data.settings, p = readPrefs();
-  const fs = p.fontScale || 1, thm = p.theme || 'auto';
+  const fs = p.fontScale || 1, thm = p.theme || 'dark';
   const canShare = !!(navigator.canShare && window.File && navigator.canShare({ files: [new File(['{}'], 'x.json', { type: 'application/json' })] }));
   return `
   <div class="cards-2">
@@ -3846,6 +4031,7 @@ const ACTIONS = {
   typeQty: el => { const e = entryFor(S.ui.date, el.dataset.id); if (e && !canEditBy(e.by)) return notAllowed(e.by); qtyModal(el.dataset.id); },
   editPrice: el => { const e = entryFor(S.ui.date, el.dataset.id); if (e && !canEditBy(e.by)) return notAllowed(e.by); priceModal(el.dataset.id); },
   customExpense: () => customExpenseModal(),
+  smsImport: () => smsModal(),
   voice: () => {
     if (S.ui.view !== 'ledger') { S.ui.date = todayKey(); S.ui.filter = 'all'; S.ui.q = ''; }
     voiceModal();

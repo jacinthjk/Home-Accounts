@@ -28,7 +28,7 @@ Open **<https://jacinthjk.github.io/Home-Accounts/>** on the phone, then install
 
 It gets its own icon, opens full-screen like any other app, and works without internet.
 
-On a phone, **Reports** and **Settings** are under the **☰ More** button at the bottom. Tablets and computers show them directly in the menu.
+On a phone, the menu shows Home, Daily Ledger, a round **+ Add** button, Planner and **☰ More**. **Loans**, **Income**, **Reports** and **Settings** are under More. Tablets and computers show them directly in the menu.
 
 ## Family sharing 👨‍👩‍👧
 Share one account book with your family. Everyone adds their own daily expenses from their own phone, with their own account. Changes show up on everyone's devices within seconds. The family's totals, budgets, warnings and reports include everyone.
@@ -88,7 +88,7 @@ Tap **English / தமிழ்** on the login screen, the **அ / A** button at
 - **Copy items from an earlier day** repeats a regular shopping list.
 
 ## Planner 📅 (yearly planner & monthly pre-planner)
-Tap **📅 Planner** in the menu.
+Tap **📅 Planner** in the menu or on Home.
 - **The year:** all 12 months are shown at once. Each month shows what you **planned** and what you **spent**, with a coloured bar, and any payments still to make or overdue. This month is highlighted. Use ◀ ▶ to change the year.
 - **Tap a month** to plan it in advance:
   - **Planned payments & purchases:** things to pay or buy that month, such as school fees, rent, a gas cylinder or festival shopping, with an optional due date. **Tick** one when it is paid and it is added to the daily ledger automatically. Untick it to take it back out.
@@ -98,7 +98,7 @@ Tap **📅 Planner** in the menu.
 - The app reminds you on **Home** when a planned payment is due in the next 3 days or is overdue, and warns you when you spend more than planned.
 
 ## Loans 🏦
-Tap **🏦 Loans** in the menu to keep track of money you have to repay: to people, banks, jewel loans or anything else.
+Tap **🏦 Loans** in the menu (on a phone, under ☰ More) to keep track of money you have to repay: to people, banks, jewel loans or anything else.
 - **Add a loan:** choose the type, who it is from, the amount and the date it was taken. You can add a note, such as the interest rate or what was pledged.
 - **Add repayment** each time you pay. The app shows the **loan amount, how much is repaid and the balance to repay** for each loan, plus the totals at the top. When the balance reaches zero the loan moves to **Fully repaid**.
 - A repayment is also added to the daily ledger as an expense, so your spending and savings stay correct. Untick the box if you do not want that.
@@ -134,6 +134,11 @@ Set a **monthly budget** in Settings. You can also set a budget for each type of
 - you are spending more than usual on a particular item, such as Milk or Gas, or on a whole type of expense
 - you may miss your saving goal, or have already gone past what you can spend
 - this year's spending is more than 10% above the same dates last year
+
+## Add from bank SMS 📩
+Tap **+ Add → Add from bank SMS** (or the button in the Daily Ledger), then paste the bank messages you copied. The app finds completed payments and money received, and you check each one before it is added.
+
+A web app cannot open a phone's messages, so you choose which ones to paste. They are read only on your device and never saved or sent anywhere. OTPs, offers and payments that did not complete are skipped. Pasting the same message again will not add it twice.
 
 ## Saving goal 🏦
 Choose how much of your income to save (on Home, or in Settings → Budgets). Home then shows how much to keep aside and **how much you can spend today**.
