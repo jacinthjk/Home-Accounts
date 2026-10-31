@@ -1,10 +1,10 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <rect width="512" height="512" rx="112" fill="#0b0f08"/>
-  <rect x="136" y="96" width="240" height="312" rx="28" fill="#c6f135"/>
-  <rect x="136" y="96" width="44" height="312" rx="22" fill="#9cc400"/>
-  <rect x="206" y="150" width="138" height="18" rx="9" fill="#16200a" opacity=".55"/>
-  <rect x="206" y="196" width="138" height="18" rx="9" fill="#16200a" opacity=".55"/>
-  <rect x="206" y="242" width="96" height="18" rx="9" fill="#16200a" opacity=".55"/>
-  <circle cx="352" cy="364" r="78" fill="#16200a" stroke="#0b0f08" stroke-width="14"/>
-  <text x="352" y="394" font-family="Segoe UI, Arial, sans-serif" font-size="96" font-weight="700" text-anchor="middle" fill="#c6f135">₹</text>
+  <rect width="512" height="512" rx="112" fill="#0b1f44"/>
+  <rect x="136" y="96" width="240" height="312" rx="28" fill="#dcecfb"/>
+  <rect x="136" y="96" width="44" height="312" rx="22" fill="#8cc1f0"/>
+  <rect x="206" y="150" width="138" height="18" rx="9" fill="#1c4a8f" opacity=".6"/>
+  <rect x="206" y="196" width="138" height="18" rx="9" fill="#1c4a8f" opacity=".6"/>
+  <rect x="206" y="242" width="96" height="18" rx="9" fill="#1c4a8f" opacity=".6"/>
+  <circle cx="352" cy="364" r="78" fill="#3f76bb" stroke="#0b1f44" stroke-width="14"/>
+  <text x="352" y="394" font-family="Segoe UI, Arial, sans-serif" font-size="96" font-weight="700" text-anchor="middle" fill="#ffffff">₹</text>
 </svg>

@@ -7,8 +7,8 @@
   "id": "./",
   "display": "standalone",
   "orientation": "any",
-  "background_color": "#0b0f08",
-  "theme_color": "#0b0f08",
+  "background_color": "#dcecfb",
+  "theme_color": "#dcecfb",
   "lang": "en",
   "categories": ["finance", "productivity"],
   "icons": [

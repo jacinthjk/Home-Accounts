@@ -8,7 +8,7 @@
   --info: #b8aeff; --info-soft: #25223f;
   --series-1: #7fa000; --series-2: #8676ea; --grid: #2a331f;
   --hero-bg: linear-gradient(150deg, #d8f75a, #b4e31f); --hero-ink: #16200a; --hero-btn: #16200a; --hero-btn-ink: #e4fb8a;
-  --compare: #b8aeff; --compare-ink: #1c1640; --glow: rgba(198, 241, 53, .13);
+  --ring-1: #7fa000; --ring-2: #8676ea; --ring-3: #c9803a; --glow: rgba(198, 241, 53, .13);
   --shadow: none; color-scheme: dark;
   --radius: 22px;
 }
@@ -20,7 +20,7 @@
   --info: #5541c4; --info-soft: #ece9ff;
   --series-1: #4f7500; --series-2: #6b57d6; --grid: #e2e7d4;
   --hero-bg: linear-gradient(150deg, #d8f75a, #b4e31f); --hero-ink: #16200a; --hero-btn: #16200a; --hero-btn-ink: #e4fb8a;
-  --compare: #d9d3ff; --compare-ink: #1c1640; --glow: rgba(120, 170, 0, .14);
+  --ring-1: #4f7500; --ring-2: #6b57d6; --ring-3: #b0620c; --glow: rgba(120, 170, 0, .14);
   --shadow: 0 1px 2px rgba(0,0,0,.05), 0 4px 14px rgba(0,0,0,.05); color-scheme: light;
 }
 @media (prefers-color-scheme: light) {
@@ -32,10 +32,65 @@
     --info: #5541c4; --info-soft: #ece9ff;
     --series-1: #4f7500; --series-2: #6b57d6; --grid: #e2e7d4;
     --hero-bg: linear-gradient(150deg, #d8f75a, #b4e31f); --hero-ink: #16200a; --hero-btn: #16200a; --hero-btn-ink: #e4fb8a;
-    --compare: #d9d3ff; --compare-ink: #1c1640; --glow: rgba(120, 170, 0, .14);
+    --ring-1: #4f7500; --ring-2: #6b57d6; --ring-3: #b0620c; --glow: rgba(120, 170, 0, .14);
     --shadow: 0 1px 2px rgba(0,0,0,.05), 0 4px 14px rgba(0,0,0,.05); color-scheme: light;
   }
 }
+/* Blue glass: a sky-blue page with navy cards. Card colours are set again on the cards themselves,
+   so everything inside a card reads light-on-navy while the page reads navy-on-light. */
+@media screen {
+  :root[data-theme="blue"] {
+    --bg: #dcecfb; --surface: #eff6fe; --surface-2: #d3e5f8; --border: #b3cfee;
+      --text: #0b2147; --text-2: #27426f; --muted: #2f4a76;
+      --accent: #0f3f86; --accent-ink: #ffffff; --accent-soft: #cfe3fa;
+      --danger: #a61b12; --danger-soft: #fde9e7; --warning: #8a5200; --warning-soft: #fff3d9;
+      --info: #1f4fa8; --info-soft: #dfeafc;
+      --series-1: #1f5fb4; --series-2: #c26a10; --grid: #b9d3ee;
+      --ring-1: #1f5fb4; --ring-2: #0e8f7e; --ring-3: #c26a10;
+    --hero-bg: linear-gradient(150deg, #3f76bb, #1c4a8f 50%, #0b1f44); --hero-ink: #ffffff; --hero-btn: rgba(255, 255, 255, .14); --hero-btn-ink: #ffffff;
+    --glow: transparent; --shadow: 0 6px 20px rgba(11, 33, 71, .16); --radius: 24px; color-scheme: light;
+  }
+  :root[data-theme="blue"] body::before { content: ""; position: fixed; inset: 0; z-index: -1; background: linear-gradient(170deg, #e8f3fe, #cbe2f8 45%, #a9cff1); }
+  :root[data-theme="blue"] { background: #cbe2f8; }
+  :root[data-theme="blue"] body { background: transparent; }
+  :root[data-theme="blue"] .card, :root[data-theme="blue"] .modal, :root[data-theme="blue"] .item-row,
+  :root[data-theme="blue"] .month-card, :root[data-theme="blue"] .lock-card, :root[data-theme="blue"] .bottom-nav {
+    --bg: #0b1f44; --surface: #10295a; --surface-2: #1b3a72; --border: #2c4f8a;
+      --text: #f2f7ff; --text-2: #cfdcf2; --muted: #a9bddd;
+      --accent: #8cc4f7; --accent-ink: #06193a; --accent-soft: #1c3f78;
+      --danger: #ff9c92; --danger-soft: #43201f; --warning: #f7c263; --warning-soft: #3b2d12;
+      --info: #a9cdf8; --info-soft: #1a3869;
+      --series-1: #4f92dc; --series-2: #d0723a; --grid: #264a82;
+    color: var(--text); color-scheme: dark;
+  }
+  :root[data-theme="blue"] .card, :root[data-theme="blue"] .lock-card { background: linear-gradient(160deg, #173a70, #0b1f44); border-color: transparent; }
+  /* The ring sits on the page, like glass */
+  :root[data-theme="blue"] .card.ring-card {
+    --bg: #dcecfb; --surface: #eff6fe; --surface-2: #d3e5f8; --border: #b3cfee;
+      --text: #0b2147; --text-2: #27426f; --muted: #2f4a76;
+      --accent: #0f3f86; --accent-ink: #ffffff; --accent-soft: #cfe3fa;
+      --danger: #a61b12; --danger-soft: #fde9e7; --warning: #8a5200; --warning-soft: #fff3d9;
+      --info: #1f4fa8; --info-soft: #dfeafc;
+      --series-1: #1f5fb4; --series-2: #c26a10; --grid: #b9d3ee;
+      --ring-1: #1f5fb4; --ring-2: #0e8f7e; --ring-3: #c26a10;
+    color: var(--text); color-scheme: light; background: rgba(255, 255, 255, .45); border-color: rgba(255, 255, 255, .7);
+  }
+  /* Light-blue tiles with navy writing */
+  :root[data-theme="blue"] .stat {
+    --surface: #8cc1f0; --border: transparent; --text: #0b2147; --text-2: #15315f; --accent: #07492a; --danger: #8f140c;
+    color: var(--text);
+  }
+  :root[data-theme="blue"] .topbar { background: rgba(232, 243, 254, .78); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); }
+  :root[data-theme="blue"] .hero, :root[data-theme="blue"] .ledger-total { box-shadow: var(--shadow); }
+  :root[data-theme="blue"] .qa { background: var(--hero-btn); border: 1px solid rgba(255, 255, 255, .24); border-radius: 16px; padding: 12px 4px; }
+  :root[data-theme="blue"] .qa .tile { background: none; width: auto; height: 26px; }
+  :root[data-theme="blue"] .hero .btn { border-color: rgba(255, 255, 255, .24); }
+}
+@media screen and (max-width: 599px) {
+  :root[data-theme="blue"] .nav-add .ico { width: 40px; height: 40px; margin-top: 0; background: #8cc4f7; color: #06193a; box-shadow: none; }
+  :root[data-theme="blue"] .bottom-nav button.nav-add .ico svg { width: 24px; height: 24px; }
+}
+
 /* Paper is white, whatever the screen shows */
 @media print {
   :root, :root[data-theme] {
@@ -46,7 +101,7 @@
     --info: #5541c4; --info-soft: #ece9ff;
     --series-1: #4f7500; --series-2: #6b57d6; --grid: #e2e7d4;
     --hero-bg: linear-gradient(150deg, #d8f75a, #b4e31f); --hero-ink: #16200a; --hero-btn: #16200a; --hero-btn-ink: #e4fb8a;
-    --compare: #d9d3ff; --compare-ink: #1c1640; --glow: rgba(120, 170, 0, .14);
+    --ring-1: #4f7500; --ring-2: #6b57d6; --ring-3: #b0620c; --glow: rgba(120, 170, 0, .14);
     --shadow: 0 1px 2px rgba(0,0,0,.05), 0 4px 14px rgba(0,0,0,.05); color-scheme: light;
   }
 }
@@ -221,12 +276,22 @@ textarea.input { min-height: 80px; resize: vertical; }
 .qa .tile { width: 54px; height: 54px; border-radius: 17px; background: var(--hero-btn); color: var(--hero-btn-ink); display: flex; align-items: center; justify-content: center; }
 .qa .tile svg { width: 26px; height: 26px; }
 .qa:focus-visible { outline-color: var(--hero-ink); }
-.compare {
-  width: 100%; border: 0; border-radius: 18px; background: var(--compare); color: var(--compare-ink); padding: 14px 16px; margin-bottom: 14px;
-  display: flex; align-items: center; gap: 12px; text-align: left;
-}
-.compare .big { font-size: 1.25rem; font-weight: 800; white-space: nowrap; }
-.compare .why { flex: 1; font-size: .9rem; line-height: 1.3; min-width: 0; }
+.hero .v .dim { opacity: .6; }
+.pill { display: inline-block; margin-top: 8px; background: none; border: 1px solid currentColor; border-radius: 999px; padding: 5px 12px; font-size: .84rem; font-weight: 600; color: inherit; text-align: left; line-height: 1.25; min-height: 34px; }
+/* Saving ring: spent, left and kept aside, with the day's amount in the middle */
+.ring { position: relative; width: min(100%, 250px); margin: 4px auto 12px; }
+.ring svg { display: block; width: 100%; height: auto; transform: rotate(-90deg); }
+.ring circle { fill: none; stroke-width: 15; }
+.ring .seg-1 { stroke: var(--ring-1); }
+.ring .seg-2 { stroke: var(--ring-2); }
+.ring .seg-3 { stroke: var(--ring-3); }
+.ring .track { stroke: var(--surface-2); }
+.ring-mid { position: absolute; inset: 24%; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; font-size: .82rem; line-height: 1.2; pointer-events: none; }
+.ring-mid b { font-size: 1.55rem; font-weight: 800; overflow-wrap: anywhere; }
+.ring-legend { display: grid; gap: 6px; margin-bottom: 10px; }
+.ring-legend div { display: flex; align-items: center; gap: 8px; }
+.ring-legend i { width: 12px; height: 12px; border-radius: 3px; flex: none; }
+.ring-legend b { margin-left: auto; white-space: nowrap; }
 .card-head { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
 .card-head h3 { margin: 0; flex: 1; min-width: 0; }
 .card-head .link-btn { padding: 8px 2px; white-space: nowrap; }

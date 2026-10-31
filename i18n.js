@@ -76,7 +76,7 @@ window.HA_I18N = {
 
   // Short words for the bottom menu on phones
   menu: {
-    "Home": "முகப்பு", "Daily Ledger": "கணக்கு", "Planner": "திட்டம்", "Loans": "கடன்", "Income": "வரவு", "Reports": "விவரம்", "Settings": "அமைப்பு", "Add": "சேர்",
+    "Home": "முகப்பு", "Daily Ledger": "கணக்கு", "Planner": "திட்டம்", "Loans": "கடன்", "Income": "வரவு", "Reports": "விவரம்", "Settings": "அமைப்பு", "Add": "சேர்", "Speak": "பேசு",
   },
 
   units: {
@@ -859,8 +859,6 @@ window.HA_I18N = {
     "Wait one day before a big unplanned purchase. Quick decisions often cost more.": "திட்டமிடாத பெரிய செலவுக்கு முன் ஒரு நாள் காத்திருங்கள். அவசர முடிவுகள் பெரும்பாலும் அதிகம் செலவாகும்.",
 
     // ---- New look
-    "Spending is up compared with this time last month": "கடந்த மாதம் இதே நேரத்தை விடச் செலவு கூடியுள்ளது",
-    "Spending is down compared with this time last month": "கடந்த மாதம் இதே நேரத்தை விடச் செலவு குறைந்துள்ளது",
     "Latest expenses": "சமீபத்திய செலவுகள்",
     "See all": "அனைத்தும்",
     "Spending envelopes": "செலவு உறைகள்",
@@ -878,5 +876,15 @@ window.HA_I18N = {
     "Please tick at least one.": "குறைந்தது ஒன்றையாவது தேர்ந்தெடுங்கள்.",
     "{n} transaction": "{n} பரிவர்த்தனை",
     "{n} transactions": "{n} பரிவர்த்தனைகள்",
+
+    // ---- Blue look
+    "{p} more than this time last month": "கடந்த மாதம் இதே நேரத்தை விட {p} அதிகம்",
+    "{p} less than this time last month": "கடந்த மாதம் இதே நேரத்தை விட {p} குறைவு",
+    "Left to spend": "செலவிட மீதி",
+    "For saving": "சேமிப்புக்கு",
+    "Over by": "அதிகம்",
+    "Spending by month": "மாத வாரியான செலவு",
+    "Spending in each of the last 6 months": "கடந்த 6 மாதங்களின் ஒவ்வொரு மாதச் செலவு",
+    "Blue": "நீலம்",
   },
 };

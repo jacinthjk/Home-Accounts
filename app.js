@@ -197,7 +197,9 @@ window.addEventListener('pagehide', () => { if (saveTimer) flush(); });
 function applyPrefs() {
   const p = readPrefs();
   document.documentElement.style.fontSize = `${17 * (p.fontScale || 1)}px`;
-  document.documentElement.dataset.theme = p.theme || 'dark';
+  const theme = p.theme || 'blue';
+  document.documentElement.dataset.theme = theme;
+  $('meta[name=theme-color]')?.setAttribute('content', { dark: '#0b0f08', light: '#f3f6ea' }[theme] || '#dcecfb');
   document.body.classList.toggle('privacy', !!p.privacy && !!S.dataKey);
   const b = $('#btnPrivacy');
   if (b) { b.setAttribute('aria-pressed', String(!!p.privacy)); b.innerHTML = p.privacy ? `🙈<span class="lbl">${esc(t('Show'))}</span>` : `👁️<span class="lbl">${esc(t('Hide'))}</span>`; }
@@ -1320,16 +1322,44 @@ function tipCard() {
   return `<div class="card"><h3>💡 ${esc(t("Today's money idea"))}</h3><p style="margin:0 0 6px">${esc(t(tip))}</p>
     <p class="small muted" style="margin:0">${esc(t('Idea from: {b}', { b: book }))}</p></div>`;
 }
-const quickAction = (attrs, icon, label) => `<button class="qa" ${attrs}><span class="tile"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${icon}</svg></span>${esc(t(label))}</button>`;
+const quickAction = (attrs, icon, label) => `<button class="qa" ${attrs}><span class="tile"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${icon}</svg></span>${esc((LANG === 'ta' && I18N.menu?.[label]) || t(label))}</button>`;
+/** The paise are shown fainter, so the rupees stand out. */
+function heroMoney(n) {
+  const [whole, dec] = money(n).split('.');
+  return `<span class="money num">${esc(whole)}${dec ? `<span class="dim">.${esc(dec)}</span>` : ''}</span>`;
+}
 /** This month so far against the same days of last month. */
-function compareBanner(mk, tk) {
+function comparePill(mk, tk) {
   const prev = addMonths(mk, -1), day = Math.min(pkey(tk).getDate(), daysInMonth(prev));
   const now = catTotals(`${mk}-01`, tk).total, was = catTotals(`${prev}-01`, `${prev}-${pad(day)}`).total;
   if (!(was > 0)) return '';
   const d = (now - was) / was * 100;
   if (Math.abs(d) < 1) return '';
-  return `<button class="compare" data-act="nav" data-to="reports"><span class="big">${d > 0 ? '▲' : '▼'} ${pct(Math.abs(d))}</span>
-    <span class="why">${esc(t(d > 0 ? 'Spending is up compared with this time last month' : 'Spending is down compared with this time last month'))}</span><span aria-hidden="true">›</span></button>`;
+  return `<button class="pill" data-act="nav" data-to="reports">${d > 0 ? '▲' : '▼'} ${esc(t(d > 0 ? '{p} more than this time last month' : '{p} less than this time last month', { p: pct(Math.abs(d)) }))}</button>`;
+}
+/** The income of the month as a ring: spent, left to spend, kept aside. */
+function savingRing(st, sp) {
+  const spent = Math.min(st.expense, sp.income), keep = Math.max(0, Math.min(sp.goal, sp.income - spent)), left = Math.max(0, sp.income - spent - keep);
+  const parts = [[spent, 'Spent'], [left, 'Left to spend'], [keep, 'For saving']];
+  let at = 0;
+  const arcs = parts.map(([v, label], i) => {
+    const len = v / sp.income * 100, gap = parts.filter(p => p[0] > 0).length > 1 ? 1 : 0;
+    const arc = v > 0 ? `<circle class="seg-${i + 1}" cx="60" cy="60" r="50" pathLength="100" stroke-dasharray="${Math.max(len - gap, .5).toFixed(2)} 100" stroke-dashoffset="${(-at).toFixed(2)}" data-tip="${esc(`${t(label)}: ${money(v)}`)}"/>` : '';
+    at += len;
+    return arc;
+  }).join('');
+  const dLeft = daysInMonth(mkey(todayKey())) - pkey(todayKey()).getDate() + 1;
+  return `<div class="ring"><svg class="money" viewBox="0 0 120 120" role="img" aria-label="${esc(parts.map(([v, l]) => `${t(l)} ${money(v)}`).join(', '))}"><circle class="track" cx="60" cy="60" r="50"/>${arcs}</svg>
+      <div class="ring-mid">${sp.left >= 0 ? `<span>${esc(t('You can spend today'))}</span><b class="saving-today">${M(sp.left / dLeft)}</b>` : `<span>${esc(t('Over by'))}</span><b>${M(-sp.left)}</b>`}</div></div>
+    <div class="ring-legend">${parts.map(([v, l], i) => `<div><i style="background:var(--ring-${i + 1})"></i><span>${esc(t(l))}</span><b>${M(v)}</b></div>`).join('')}</div>`;
+}
+/** Spending in the last six months, this month last. */
+function sixMonthCard(mk) {
+  const months = [];
+  for (let i = 5; i >= 0; i--) { const m = addMonths(mk, -i), s = monthStats(m); months.push({ m, label: fmtMonthShort(m), showLabel: true, values: [s.expense], tip: `${fmtMonth(m)}: ${money(s.expense)}` }); }
+  if (!months.some(x => x.values[0] > 0)) return '';
+  return `<div class="card"><div class="card-head"><h3>📊 ${esc(t('Spending by month'))}</h3><button class="link-btn small" data-act="nav" data-to="reports">${esc(t('See all'))}</button></div>
+    <div class="chart-wrap">${colChart(months, t('Spending in each of the last 6 months'))}</div></div>`;
 }
 /** The newest expenses, with the last seven days folded under them. */
 function latestCard(tk, days, maxDay) {
@@ -1372,11 +1402,10 @@ function homeSavingCard(mk, st) {
   if (!sp.income) return `<div class="card">${head}<p class="muted" style="margin:0 0 10px">${esc(t("Your goal is to save {p} of your income. Add this month's income to see what you can spend.", { p: pct(sp.pc) }))}</p>
     <button class="btn" data-act="nav" data-to="income">${esc(t('Add income'))}</button></div>`;
   const dLeft = daysInMonth(mk) - pkey(todayKey()).getDate() + 1;
-  return `<div class="card">${head}
-    <p style="margin:0 0 8px">${th('Keep aside **{g}** ({p} of income)', { g: M(sp.goal), p: pct(sp.pc) })}</p>
-    ${progressHtml(st.expense, sp.canSpend)}
-    ${sp.left >= 0 ? `<div class="row wrap" style="margin-top:10px"><span>${esc(t('You can spend today'))}</span><span class="spacer"></span><b class="saving-today">${M(sp.left / dLeft)}</b></div>
-      <p class="small muted" style="margin:4px 0 0">${th(dLeft > 1 ? '{a} left for the next {n} days' : '{a} left for today', { a: M(sp.left), n: dLeft })}</p>`
+  return `<div class="card ring-card">${head}
+    ${savingRing(st, sp)}
+    <p style="margin:0">${th('Keep aside **{g}** ({p} of income)', { g: M(sp.goal), p: pct(sp.pc) })}</p>
+    ${sp.left >= 0 ? `<p class="small muted" style="margin:4px 0 0">${th(dLeft > 1 ? '{a} left for the next {n} days' : '{a} left for today', { a: M(sp.left), n: dLeft })}</p>`
     : `<p style="margin:10px 0 0;color:var(--danger)"><b>${th('{a} over what you can spend', { a: M(-sp.left) })}</b></p>`}
   </div>`;
 }
@@ -1397,7 +1426,8 @@ function viewHome() {
   <div class="home-top">
   <div class="hero">
     <div class="k">${esc(t('Spent today'))} · ${esc(fmtShort(tk))}</div>
-    <div class="v">${M(dayTotal(tk))}</div>
+    <div class="v">${heroMoney(dayTotal(tk))}</div>
+    ${comparePill(mk, tk)}
     <div class="hero-actions">
       ${quickAction(`data-act="openDay" data-date="${tk}"`, '<path d="M12 5v14M5 12h14"/>', 'Add')}
       ${quickAction('data-act="voice"', '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>', 'Speak')}
@@ -1416,7 +1446,6 @@ function viewHome() {
   </div>
   </div>
   </div>
-  ${compareBanner(mk, tk)}
 
   <div class="cards-2">
   ${homeSavingCard(mk, st)}
@@ -1428,6 +1457,7 @@ function viewHome() {
   </div>
 
   ${latestCard(tk, days, maxDay)}
+  ${sixMonthCard(mk)}
   ${envelopeCard(st)}
 
   <div class="card">
@@ -2171,7 +2201,7 @@ function installCard() {
 }
 function viewSettings() {
   const s = S.data.settings, p = readPrefs();
-  const fs = p.fontScale || 1, thm = p.theme || 'dark';
+  const fs = p.fontScale || 1, thm = p.theme || 'blue';
   const canShare = !!(navigator.canShare && window.File && navigator.canShare({ files: [new File(['{}'], 'x.json', { type: 'application/json' })] }));
   return `
   <div class="cards-2">
@@ -2217,7 +2247,7 @@ function viewSettings() {
     <div class="field"><span style="font-weight:600;display:block;margin-bottom:6px">${esc(t('Text size'))}</span>
       <div class="grid-3">${[[1, 'Normal'], [1.15, 'Large'], [1.3, 'Extra large']].map(([v, l]) => `<button class="chip" data-act="font" data-v="${v}" aria-pressed="${fs === v}" style="font-size:${v}rem">${esc(t(l))}</button>`).join('')}</div></div>
     <div class="field" style="margin:0"><span style="font-weight:600;display:block;margin-bottom:6px">${esc(t('Colours'))}</span>
-      <div class="grid-3">${[['auto', '🖥️', 'Automatic'], ['light', '☀️', 'Light'], ['dark', '🌙', 'Dark']].map(([v, i, l]) => `<button class="chip" data-act="theme" data-v="${v}" aria-pressed="${thm === v}">${i} ${esc(t(l))}</button>`).join('')}</div></div>
+      <div class="grid-3">${[['blue', '🌊', 'Blue'], ['dark', '🌙', 'Dark'], ['light', '☀️', 'Light'], ['auto', '🖥️', 'Automatic']].map(([v, i, l]) => `<button class="chip" data-act="theme" data-v="${v}" aria-pressed="${thm === v}">${i} ${esc(t(l))}</button>`).join('')}</div></div>
   </div>
 
   <div class="card"><h3>🎤 ${esc(t('Voice entry'))}</h3>
