@@ -1117,14 +1117,17 @@ if (isWeb) {
   link.rel = 'manifest'; link.href = 'manifest.webmanifest';
   document.head.appendChild(link);
   if ('serviceWorker' in navigator) {
+    const hadWorker = !!navigator.serviceWorker.controller; // was an installed version already running this page?
     window.addEventListener('load', () => {
       navigator.serviceWorker.register('sw.js').then(reg => {
         reg.addEventListener('updatefound', () => {
           const w = reg.installing;
           w?.addEventListener('statechange', () => {
-            if (w.state !== 'activated' || !navigator.serviceWorker.controller) return;
-            // A newer version is ready. Nothing is open yet on the login screen, so switch to it straight away.
-            if (!S.dataKey) location.reload();
+            if (w.state !== 'activated' || !hadWorker) return; // the very first install is not an update
+            // A newer version is ready. On an untouched login screen, switch to it straight away;
+            // never reload while the accounts are open or someone has started typing.
+            const typing = $$('#lock input').some(i => i.type !== 'checkbox' && i.value) || !!$('#modalHost').firstChild;
+            if (!S.dataKey && !typing) location.reload();
             else toast(t('✨ App updated'), t('Close and reopen the app to use the new version.'));
           });
         });
