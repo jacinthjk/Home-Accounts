@@ -67,6 +67,9 @@ Notes:
 - The free plan suits a few hundred users. It **pauses** after about a week with no use; if that happens, open the Supabase dashboard and click **Restore project**. Nothing is lost. A busier app may need the paid plan.
 - Mobile numbers are not verified by SMS. Anyone could sign up with a number they do not own, but that number then belongs to that account. Real SMS checks can be added later with a paid SMS provider.
 
+## "Please sign in again" 🔑
+If a device shows this in **Settings → Family sharing**, tap **Sign in again** and enter your password. Your accounts stay on the device the whole time, and anything you added meanwhile is sent once you are connected.
+
 ## Language / மொழி 🌐
 Tap **English / தமிழ்** on the login screen, the **அ / A** button at the top, or **Settings → Language**.
 - All screens, warnings and messages change language.

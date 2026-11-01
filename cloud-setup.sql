@@ -286,9 +286,19 @@ $$;
 -- Called once, right after signing up
 create or replace function public.ha_register(p_phone text, p_pw_wrap text, p_rc_wrap text, p_rc_verifier text, p_keyring text) returns void
 language plpgsql security definer set search_path = public as $$
+declare old_user uuid;
 begin
   if auth.uid() is null then raise exception 'not signed in' using errcode = '42501'; end if;
   if not public.ha_phone_matches(p_phone) then raise exception 'mobile number does not match the account' using errcode = '42501'; end if;
+  -- A user removed in the Supabase dashboard leaves their rows behind, which would hold this number for ever.
+  -- Clear them, but only when that user's sign-in no longer exists.
+  select p.user_id into old_user from public.ha_profiles p
+    where p.phone = p_phone and p.user_id <> auth.uid() and not exists (select 1 from auth.users u where u.id = p.user_id);
+  if old_user is not null then
+    delete from public.ha_books where owner = old_user;
+    delete from public.ha_members where user_id = old_user;
+    delete from public.ha_profiles where user_id = old_user;
+  end if;
   insert into public.ha_profiles (user_id, phone, pw_wrap, rc_wrap, rc_verifier, keyring)
   values (auth.uid(), p_phone, p_pw_wrap, p_rc_wrap, p_rc_verifier, p_keyring)
   on conflict (user_id) do update set pw_wrap = excluded.pw_wrap, rc_wrap = excluded.rc_wrap,

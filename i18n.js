@@ -941,5 +941,19 @@ window.HA_I18N = {
     "Balance: {a}": "மீதி: {a}",
     "Money already taken out needs this entry. Please change that first.": "ஏற்கனவே எடுத்த பணத்துக்கு இந்தப் பதிவு தேவை. முதலில் அதை மாற்றுங்கள்.",
     "Delete this entry of {a}?": "{a} பதிவை நீக்கவா?",
+
+    // ---- Signing in again
+    "Please sign in again on this device. Your accounts are safe here, and new entries will be sent once you sign in.": "இந்தக் கருவியில் மீண்டும் உள்நுழையுங்கள். உங்கள் கணக்குகள் இங்கே பாதுகாப்பாக உள்ளன; உள்நுழைந்ததும் புதிய பதிவுகள் அனுப்பப்படும்.",
+    "🔑 Please sign in again": "🔑 மீண்டும் உள்நுழையுங்கள்",
+    "Go to Settings → Family sharing. Your accounts are safe.": "அமைப்புகள் → குடும்பப் பகிர்வு பகுதிக்குச் செல்லுங்கள். உங்கள் கணக்குகள் பாதுகாப்பாக உள்ளன.",
+    "Sign in again": "மீண்டும் உள்நுழை",
+    "Sign in": "உள்நுழை",
+    "Enter your password to connect this device to the cloud again. Your accounts stay as they are.": "இந்தக் கருவியை மீண்டும் கிளவுடுடன் இணைக்க கடவுச்சொல்லை உள்ளிடுங்கள். உங்கள் கணக்குகள் அப்படியே இருக்கும்.",
+    "The cloud no longer has this account, but your accounts are safe on this device. You can set the account up again with the same number and password. You will get a new recovery code, and family members would need a new invite.": "கிளவுடில் இந்தக் கணக்கு இப்போது இல்லை, ஆனால் உங்கள் கணக்குகள் இந்தக் கருவியில் பாதுகாப்பாக உள்ளன. அதே எண்ணையும் கடவுச்சொல்லையும் கொண்டு கணக்கை மீண்டும் அமைக்கலாம். புதிய மீட்புக் குறியீடு கிடைக்கும்; குடும்பத்தினருக்குப் புதிய அழைப்பு தேவைப்படும்.",
+    "Set up my account again": "என் கணக்கை மீண்டும் அமை",
+    "This number now has a different account. Make a backup, then lock the app and choose \"Log in with a different account\".": "இந்த எண்ணுக்கு இப்போது வேறு கணக்கு உள்ளது. காப்பு எடுத்துவிட்டு, செயலியைப் பூட்டி \"வேறு கணக்கில் உள்நுழை\" என்பதைத் தேர்ந்தெடுங்கள்.",
+    "✅ Connected again": "✅ மீண்டும் இணைக்கப்பட்டது",
+    "This number still has an account, so its password may have been changed on another device. Please type the newest password.": "இந்த எண்ணுக்குக் கணக்கு இன்னும் உள்ளது; வேறு கருவியில் கடவுச்சொல் மாற்றப்பட்டிருக்கலாம். புதிய கடவுச்சொல்லை உள்ளிடுங்கள்.",
+    "The cloud needs an update before this can finish. In Supabase, run the newest cloud-setup.sql, then try again.": "இது முடிய கிளவுடைப் புதுப்பிக்க வேண்டும். Supabase-இல் புதிய cloud-setup.sql-ஐ இயக்கிவிட்டு மீண்டும் முயலுங்கள்.",
   },
 };

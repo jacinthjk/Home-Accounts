@@ -3835,14 +3835,30 @@ async function authed(path, body, method = 'POST') {
   if (!SYNC.at || Date.now() > SYNC.atExp - 60e3) await refreshToken(cfg);
   return sbFetch(cfg, path, body, SYNC.at, method);
 }
+/* A renewal token works only once, so windows of the app open at the same time take turns and tell each other. */
+const TOKEN_CHANNEL = 'BroadcastChannel' in window ? new BroadcastChannel('home-accounts-token') : null;
+if (TOKEN_CHANNEL) TOKEN_CHANNEL.onmessage = e => {
+  const s = sy(), m = e.data;
+  if (!s || m.me !== s.me) return;
+  SYNC.at = m.at; SYNC.atExp = m.exp; s.rt = m.rt;
+};
 function refreshToken(cfg) {
   return (SYNC.refreshing ||= (async () => {
-    try {
-      const j = await sbFetch(cfg, '/auth/v1/token?grant_type=refresh_token', { refresh_token: cfg.rt });
-      const a = tokenInfo(j);
-      SYNC.at = a.at; SYNC.atExp = a.exp; cfg.rt = a.rt;
-      if (cfg === sy()) persist(true);
-    } catch (e) { if (e.status === 400 || e.status === 401) e.auth = true; throw e; }
+    const seen = cfg.rt;
+    const renew = async () => {
+      if (cfg.rt !== seen) return; // another window renewed it while this one waited
+      try {
+        const j = await sbFetch(cfg, '/auth/v1/token?grant_type=refresh_token', { refresh_token: cfg.rt });
+        const a = tokenInfo(j);
+        SYNC.at = a.at; SYNC.atExp = a.exp; cfg.rt = a.rt;
+        if (cfg === sy()) {
+          await flush(); // saved straight away: the old token no longer works
+          TOKEN_CHANNEL?.postMessage({ me: cfg.me, at: a.at, exp: a.exp, rt: a.rt });
+          await new Promise(r => setTimeout(r, 100)); // let the other windows hear before the next one takes its turn
+        }
+      } catch (e) { if (e.status === 400 || e.status === 401) e.auth = true; throw e; }
+    };
+    try { await (navigator.locks ? navigator.locks.request('home-accounts-token', renew) : renew()); }
     finally { SYNC.refreshing = null; }
   })());
 }
@@ -3991,7 +4007,7 @@ function startSync() {
 function stopSync(keepAuth = false) {
   clearInterval(SYNC.timer); clearTimeout(SYNC.soon);
   const auth = keepAuth ? { at: SYNC.at, atExp: SYNC.atExp } : { at: null, atExp: 0 };
-  Object.assign(SYNC, { key: null, timer: null, soon: null, busy: false, again: false, status: '', err: '', membersAt: 0, deniedShown: false, refreshing: null }, auth);
+  Object.assign(SYNC, { key: null, timer: null, soon: null, busy: false, again: false, status: '', err: '', membersAt: 0, deniedShown: false, authShown: false, refreshing: null }, auth);
   paintSyncBtn();
 }
 document.addEventListener('visibilitychange', () => { if (!document.hidden && shared() && S.dataKey) syncNow(); });
@@ -4004,15 +4020,20 @@ function syncStatusText() {
     case 'busy': return t('Syncing…');
     case 'offline': return t('No internet – your changes are saved here and will be sent later.');
     case 'removed': return t('You are no longer part of this family book.');
-    case 'signedout': return t('This device lost its connection to the family book. Please ask the owner for a new invite.');
+    case 'signedout': return S.data?.account ? t('Please sign in again on this device. Your accounts are safe here, and new entries will be sent once you sign in.') : t('This device lost its connection to the family book. Please ask the owner for a new invite.');
     case 'error': return t('Could not sync: {e}', { e: SYNC.err });
     default: return s?.lastSync ? t('Synced at {t}', { t: new Date(s.lastSync).toLocaleTimeString(DLOC(), { hour: '2-digit', minute: '2-digit' }) }) : t('Syncing…');
   }
 }
 function setSyncStatus(st, err = '') {
+  const wasOut = SYNC.status === 'signedout';
   SYNC.status = st; SYNC.err = err;
   paintSyncBtn();
   const el = $('#syncLine'); if (el) el.textContent = syncStatusText();
+  if (st === 'signedout' && !wasOut && S.data?.account) {
+    if (S.ui?.view === 'settings') softRender();
+    if (!SYNC.authShown) { SYNC.authShown = true; toast(t('🔑 Please sign in again'), t('Go to Settings → Family sharing. Your accounts are safe.'), 'warning'); }
+  }
 }
 function paintSyncBtn() {
   const b = $('#btnSync'); if (!b) return;
@@ -4103,6 +4124,75 @@ function dropSharing(keepFamilyEntries) {
   persist(true); render(); updateBadge();
 }
 
+/** The cloud no longer accepts this device's sign-in. The password gets a new one; nothing on the device changes. */
+function reconnectModal() {
+  const phone = S.data.account.phone;
+  modal(`<h3>🔑 ${esc(t('Sign in again'))}</h3>
+    <p class="small muted">${esc(t('Enter your password to connect this device to the cloud again. Your accounts stay as they are.'))}</p>
+    <form id="mf">
+      <label class="field"><span>${esc(t('Password'))}</span><input class="input" type="password" name="pw" autocomplete="current-password"></label>
+      <label class="check"><input type="checkbox" data-showpw> ${esc(t('Show password'))}</label>
+      <div class="error-msg" id="merr" role="alert"></div>
+      <div id="reOffer" class="hidden"><div class="alert warning"><span class="ico">⚠️</span><div class="small">${esc(t('The cloud no longer has this account, but your accounts are safe on this device. You can set the account up again with the same number and password. You will get a new recovery code, and family members would need a new invite.'))}</div></div>
+        <button type="button" class="btn block" id="reSetup" style="margin-bottom:12px">${esc(t('Set up my account again'))}</button></div>
+      <div class="actions"><button type="button" class="btn" data-close>${esc(t('Cancel'))}</button><button class="btn primary">${esc(t('Sign in'))}</button></div>
+    </form>`, (box, close) => {
+    const f = $('#mf', box), err = $('#merr', box), offer = $('#reOffer', box);
+    pwToggle(f);
+    let tried = '', resume = null;
+    f.onsubmit = async ev => {
+      ev.preventDefault();
+      const pw = f.pw.value;
+      err.textContent = ''; offer.classList.add('hidden');
+      if (!pw) { err.textContent = t('Please type your password.'); return; }
+      await busy(f.querySelector('button.primary'), t('Please wait…'), async () => {
+        const cfg = sy();
+        try {
+          const a = tokenInfo(await sbFetch(cfg, '/auth/v1/token?grant_type=password', { email: phoneEmail(phone), password: await authSecret(phone, pw) }));
+          if (a.uid !== cfg.me) {
+            // A sign-in with no profile is a set-up that stopped partway: it can be finished from here.
+            if (await sbFetch(cfg, '/rest/v1/rpc/ha_profile_get', {}, a.at)) { err.textContent = t('This number now has a different account. Make a backup, then lock the app and choose "Log in with a different account".'); return; }
+            tried = pw; resume = a; offer.classList.remove('hidden');
+            return;
+          }
+          SYNC.at = a.at; SYNC.atExp = a.exp; cfg.rt = a.rt;
+          await flush();
+          TOKEN_CHANNEL?.postMessage({ me: cfg.me, at: a.at, exp: a.exp, rt: a.rt });
+          close(); startSync(); render(); updateBadge();
+          toast(t('✅ Connected again'));
+        } catch (e) {
+          if (e.status !== 400 && e.code !== 'invalid_credentials') { err.textContent = accountError(e); return; }
+          // Refused by the cloud. If this is still the password that opens this device, the account may be gone from the cloud.
+          let opens = false;
+          try { (await unwrapRaw(pw, S.vault.pw)).fill(0); opens = true; } catch { /* not this device's password */ }
+          if (!opens) { err.textContent = t('The mobile number or password is not correct.'); return; }
+          tried = pw; offer.classList.remove('hidden');
+        }
+      });
+    };
+    $('#reSetup', box).onclick = () => busy($('#reSetup', box), t('Please wait…'), async () => {
+      const keep = { key: S.dataKey, vault: S.vault, copy: JSON.stringify(S.data) };
+      try {
+        let code;
+        if (resume) {
+          const c2 = cloudCfg(); c2.rt = resume.rt;
+          stopSync(); SYNC.at = resume.at; SYNC.atExp = resume.exp;
+          code = await finishAccount(c2, resume.uid, phone, tried, S.data.settings.name || '', S.data.settings.cur, S.data);
+        } else code = await createAccount(phone, tried, S.data.settings.name || '', S.data.settings.cur, S.data);
+        close(); showRecoveryCode(code, () => startApp(), true);
+      } catch (ex) {
+        Object.assign(S, { dataKey: keep.key, vault: keep.vault, data: JSON.parse(keep.copy) });
+        SYNC.at = null; SYNC.atExp = 0; // whatever was signed in during the attempt is not this device's account
+        startSync();
+        offer.classList.add('hidden');
+        err.textContent = ex?.code === '23505' ? t('The cloud needs an update before this can finish. In Supabase, run the newest cloud-setup.sql, then try again.')
+          : ex instanceof UserError && /already has an account/.test(ex.message) || ex?.message === t('This mobile number already has an account. Please log in instead.')
+          ? t('This number still has an account, so its password may have been changed on another device. Please type the newest password.') : accountError(ex);
+      }
+    });
+  });
+}
+
 function familyCard() {
   const s = sy();
   if (!s) return `<div class="card" id="familyCard"><h3>👨‍👩‍👧 ${esc(t('Family sharing'))}</h3>
@@ -4112,8 +4202,10 @@ function familyCard() {
   const problem = ['removed', 'signedout'].includes(SYNC.status);
   const creator = isCreator(), alone = people.length <= 1;
   return `<div class="card" id="familyCard"><h3>👨‍👩‍👧 ${esc(t('Family sharing'))}</h3>
-    <p class="small" style="margin-top:0"><span id="syncLine">${esc(syncStatusText())}</span></p>
-    ${problem ? `<div class="alert danger"><span class="ico">⚠️</span><div class="small">${esc(syncStatusText())}<div><button class="btn sm" data-act="familyDrop" style="margin-top:8px">${esc(S.data.account ? t('Continue with my own account book') : t('Stop syncing on this device'))}</button></div></div></div>` : ''}
+    <p class="small ${problem ? 'hidden' : ''}" style="margin-top:0"><span id="syncLine">${esc(syncStatusText())}</span></p>
+    ${problem ? `<div class="alert danger"><span class="ico">⚠️</span><div class="small">${esc(syncStatusText())}<div>${SYNC.status === 'signedout' && S.data.account
+      ? `<button class="btn primary sm" data-act="familyReconnect" style="margin-top:8px">🔑 ${esc(t('Sign in again'))}</button>`
+      : `<button class="btn sm" data-act="familyDrop" style="margin-top:8px">${esc(S.data.account ? t('Continue with my own account book') : t('Stop syncing on this device'))}</button>`}</div></div></div>` : ''}
     ${alone ? `<p class="small">${esc(t('Share this account book with your family. Everyone adds their own daily expenses from their own phone, and the family totals, budget and warnings include everyone.'))}</p>
       <div class="alert good"><span class="ico">🛡️</span><div class="small">${th('Entries are **encrypted on each phone** before they go to the family cloud. The cloud stores only scrambled text that it cannot read.')}</div></div>` : ''}
     <div class="small" style="font-weight:700;margin:8px 0 4px">${esc(t('Family members'))} (${people.length})</div>
@@ -4357,6 +4449,7 @@ const ACTIONS = {
   payEdit: el => payModal(loanById(el.dataset.id), el.dataset.pay),
   planCopy: () => copyPlan(S.ui.planMonth),
   planFill: () => fillFromBudgets(S.ui.planMonth),
+  familyReconnect: () => reconnectModal(),
   familyJoin: () => joinModal(),
   familyInvite: () => inviteModal(),
   familySync: () => syncNow({ members: true }).then(() => { if (S.ui.view === 'settings') render(); }),
