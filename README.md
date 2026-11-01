@@ -28,7 +28,7 @@ Open **<https://jacinthjk.github.io/Home-Accounts/>** on the phone, then install
 
 It gets its own icon, opens full-screen like any other app, and works without internet.
 
-On a phone, the menu shows Home, Daily Ledger, a round **+ Add** button, Planner and **☰ More**. **Loans**, **Income**, **Reports** and **Settings** are under More. Tablets and computers show them directly in the menu.
+On a phone, the menu shows Home, Daily Ledger, a round **+ Add** button, Planner and **☰ More**. **Loans**, **Savings**, **Income**, **Reports** and **Settings** are under More. Tablets and computers show them directly in the menu.
 
 ## Family sharing 👨‍👩‍👧
 Share one account book with your family. Everyone adds their own daily expenses from their own phone, with their own account. Changes show up on everyone's devices within seconds. The family's totals, budgets, warnings and reports include everyone.
@@ -104,6 +104,15 @@ Tap **🏦 Loans** in the menu (on a phone, under ☰ More) to keep track of mon
 - A repayment is also added to the daily ledger as an expense, so your spending and savings stay correct. Untick the box if you do not want that.
 - Open **Repayments** under a loan to see the history. Tap one to change or delete it.
 - **Interest is not calculated.** The balance is simply the loan amount minus repayments. If interest adds to what you owe, use **Edit loan** to change the loan amount.
+
+## Savings 🐖
+Keep track of where your money is saved: bank accounts, fixed deposits, gold, chit funds, post office, cash at home and more. Tap **Savings** in the menu (on a phone, under ☰ More).
+- **Add a saving** with its name, the amount so far and, if you like, a target.
+- **Add money** or **Take out** whenever it changes. Tap a saving to see its full history.
+- A ring shows where your savings are, and you can list them **One by one** or **By type**.
+- If you have set a saving goal, the page shows how much of this month's goal you have put away.
+
+Savings are separate from spending, so adding money here does not change your daily ledger. The gold or investment value is whatever you enter: the app does not look up market prices.
 
 ## Speak your expenses 🎤
 Tap **🎤 Speak your expenses** on the Daily Ledger, or **🎤 Speak** on Home, then just talk. For example:

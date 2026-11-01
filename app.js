@@ -23,7 +23,7 @@ const addDays = (k, n) => { const d = pkey(k); d.setDate(d.getDate() + n); retur
 const mkey = k => k.slice(0, 7);
 const addMonths = (mk, n) => { const d = pkey(mk + '-01'); d.setMonth(d.getMonth() + n); return dkey(d).slice(0, 7); };
 const daysInMonth = mk => { const [y, m] = mk.split('-').map(Number); return new Date(y, m, 0).getDate(); };
-const num = v => { const n = parseFloat(String(v ?? '').replace(/,/g, '').trim()); return Number.isFinite(n) ? n : NaN; };
+const num = v => { const n = parseFloat(String(v ?? '').replace(/,/g, '').trim().replace(/^[^\d.\-]+/, '')); return Number.isFinite(n) ? n : NaN; };
 const round2 = n => Math.round(n * 100) / 100;
 const fmtQty = q => (q % 1 ? String(+q.toFixed(3)) : String(q));
 const pct = n => `${Math.round(n)}%`;
@@ -118,10 +118,39 @@ function money(n) {
   const c = cur(), v = round2(n || 0);
   return (v < 0 ? '−' : '') + c.sym + Math.abs(v).toLocaleString(c.loc, { minimumFractionDigits: v % 1 ? 2 : 0, maximumFractionDigits: 2 });
 }
-function compact(n) {
-  const c = cur();
-  return c.sym + new Intl.NumberFormat(c.loc, { notation: 'compact', maximumFractionDigits: 1 }).format(n);
+/** Amount boxes show the currency and commas while typing, like ₹1,00,000. num() reads them back. */
+const AMOUNT_BOX = 'input[inputmode=decimal]:not([name=q]):not([data-v=qty])';
+function fmtAmt(v) {
+  const s = String(v ?? '').replace(/^[^\d.\-]+/, '').replace(/[^\d.\-]/g, '');
+  if (!/\d/.test(s)) return '';
+  const c = cur(), [whole, ...dec] = s.replace(/-/g, '').split('.');
+  return c.sym + (s.startsWith('-') ? '-' : '') + Number(whole || 0).toLocaleString(c.loc) + (dec.length ? '.' + dec.join('') : '');
 }
+function showAmount(el, typing) {
+  const before = el.value, next = fmtAmt(before);
+  if (next === before) return;
+  const focused = el === document.activeElement, wholeSelected = focused && before && el.selectionStart === 0 && el.selectionEnd === before.length;
+  const keep = typing && focused ? before.slice(0, el.selectionStart).replace(/[^\d.]/g, '').length : -1;
+  el.value = next;
+  if (wholeSelected) el.select();
+  else if (keep >= 0) {
+    let at = 0, seen = 0;
+    while (at < next.length && seen < keep) { if (/[\d.]/.test(next[at])) seen++; at++; }
+    if (keep === 0) at = next.search(/[\d.]/);
+    el.setSelectionRange(at, at);
+  }
+}
+document.addEventListener('input', e => { if (e.target.matches?.(AMOUNT_BOX)) showAmount(e.target, true); });
+document.addEventListener('focusout', e => { if (e.target.matches?.(AMOUNT_BOX)) showAmount(e.target, false); });
+new MutationObserver(list => {
+  for (const m of list) for (const n of m.addedNodes) {
+    if (n.nodeType !== 1) continue;
+    for (const el of n.matches(AMOUNT_BOX) ? [n] : n.querySelectorAll(AMOUNT_BOX)) {
+      if (el.placeholder === '0') el.placeholder = cur().sym + '0';
+      showAmount(el, false);
+    }
+  }
+}).observe(document.body, { childList: true, subtree: true });
 /** Money as HTML – blurred when "Hide amounts" is on. */
 const M = n => `<span class="money num">${esc(money(n))}</span>`;
 
@@ -293,6 +322,7 @@ function migrate(d) {
   d.categories ||= DEFAULT_CATS.map(([id, n, icon]) => ({ id, name: n, icon, budget: 0 }));
   if (!d.categories.some(c => c.id === 'other')) d.categories.push({ id: 'other', name: 'Others', icon: '📦', budget: 0 });
   d.items ||= []; d.ledger ||= {}; d.income ||= [];
+  d.savings ||= []; // savings: [{ id, type, name, target, note, entries: {id: {kind: in|out, amount, date, note}} }]
   d.loans ||= []; // loans: [{ id, type, name, amount, date, note, payments: {id: {amount, date, note, ldate, lkey}} }]
   d.plans ||= {}; // month plans: { 'YYYY-MM': { income, cats: {catId: amount}, note, items: {id: planned payment} } }
   // v1 -> v2: add units. The amount of every saved entry stays exactly the same.
@@ -656,6 +686,7 @@ function detachShared(d, keep) {
     d.income = (d.income || []).filter(i => !i.by || i.by === me);
     for (const p of Object.values(d.plans || {})) for (const [id, it] of Object.entries(p.items || {})) if (it.by && it.by !== me) delete p.items[id];
     d.loans = (d.loans || []).filter(l => !l.by || l.by === me);
+    d.savings = (d.savings || []).filter(p => !p.by || p.by === me);
   }
   delete d.sync;
 }
@@ -663,6 +694,7 @@ const markMine = (d, id) => {
   for (const x of [...d.items, ...d.categories, ...d.income]) x.by = id;
   for (const p of Object.values(d.plans || {})) for (const it of Object.values(p.items || {})) it.by = id;
   for (const l of d.loans || []) { l.by = id; for (const p of Object.values(l.payments || {})) p.by = id; }
+  for (const p of d.savings || []) { p.by = id; for (const e of Object.values(p.entries || {})) e.by = id; }
 };
 
 /** Creates the account's own family book, key ring and profile, and this device's locked copy. Returns the recovery code. */
@@ -1059,7 +1091,7 @@ async function enterWithRaw(raw, v, password) {
 /* ---------------------------------------------------------------------
    App shell
    --------------------------------------------------------------------- */
-const TITLES = { home: 'Home Accounts', ledger: 'Daily Ledger', planner: 'Planner', loans: 'Loans', income: 'Income', reports: 'Reports', settings: 'Settings' };
+const TITLES = { home: 'Home Accounts', ledger: 'Daily Ledger', planner: 'Planner', loans: 'Loans', savings: 'Savings', income: 'Income', reports: 'Reports', settings: 'Settings' };
 function startApp() {
   L.classList.add('hidden'); L.innerHTML = '';
   $('#app').classList.remove('hidden');
@@ -1087,7 +1119,7 @@ function hardLock(msg) {
 function go(view) {
   S.ui.view = view;
   $$('.bottom-nav [data-nav]').forEach(b => { if (b.dataset.nav === view) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current'); });
-  if (['loans', 'income', 'reports', 'settings'].includes(view)) $('#navMore').setAttribute('aria-current', 'page'); else $('#navMore').removeAttribute('aria-current');
+  if (['loans', 'savings', 'income', 'reports', 'settings'].includes(view)) $('#navMore').setAttribute('aria-current', 'page'); else $('#navMore').removeAttribute('aria-current');
   $('#topTitle').textContent = t(TITLES[view]);
   render();
   window.scrollTo(0, 0);
@@ -1102,7 +1134,7 @@ $$('.bottom-nav [data-nav]').forEach(b => { b.onclick = () => { if (b.dataset.na
 $('#navMore').onclick = () => {
   const item = (view, ico, label) => `<button class="btn block" data-more-to="${view}" ${S.ui.view === view ? 'aria-current="page"' : ''}><span class="ico" aria-hidden="true">${ico}</span>${esc(t(label))}</button>`;
   modal(`<h3>${esc(t('More'))}</h3>
-    <div class="more-list">${item('loans', '🏦', 'Loans')}${item('income', '💰', 'Income')}${item('reports', '📊', 'Reports')}${item('settings', '⚙️', 'Settings')}</div>
+    <div class="more-list">${item('loans', '🏦', 'Loans')}${item('savings', '🐖', 'Savings')}${item('income', '💰', 'Income')}${item('reports', '📊', 'Reports')}${item('settings', '⚙️', 'Settings')}</div>
     <div class="actions"><button class="btn" data-close>${esc(t('Close'))}</button></div>`, (box, close) => {
     $$('[data-more-to]', box).forEach(b => { b.onclick = () => { close(); go(b.dataset.moreTo); }; });
   });
@@ -1110,13 +1142,14 @@ $('#navMore').onclick = () => {
 $('#navAdd').onclick = () => {
   const item = (key, ico, label) => `<button class="btn block" data-add="${key}"><span class="ico" aria-hidden="true">${ico}</span>${esc(t(label))}</button>`;
   modal(`<h3>${esc(t('Add'))}</h3>
-    <div class="more-list">${item('day', '✏️', "Add today's expenses")}${item('voice', '🎤', 'Speak')}${item('other', '➕', 'Other expense (one time)')}${item('income', '💰', 'Add income')}${item('sms', '📩', 'Add from bank SMS')}</div>
+    <div class="more-list">${item('day', '✏️', "Add today's expenses")}${item('voice', '🎤', 'Speak')}${item('other', '➕', 'Other expense (one time)')}${item('income', '💰', 'Add income')}${item('sms', '📩', 'Add from bank SMS')}${item('save', '🐖', 'Add to savings')}</div>
     <div class="actions"><button class="btn" data-close>${esc(t('Close'))}</button></div>`, (box, close) => {
     $$('[data-add]', box).forEach(b => { b.onclick = () => {
       close();
       const k = b.dataset.add;
       if (k === 'income') { go('income'); incomeModal(null); return; }
       if (k === 'sms') { smsModal(); return; }
+      if (k === 'save') { go('savings'); if (!S.data.savings.length) potModal(null); return; }
       S.ui.date = todayKey(); S.ui.filter = 'all'; S.ui.q = '';
       if (k === 'voice') { voiceModal(); return; }
       go('ledger');
@@ -1337,21 +1370,61 @@ function comparePill(mk, tk) {
   if (Math.abs(d) < 1) return '';
   return `<button class="pill" data-act="nav" data-to="reports">${d > 0 ? '▲' : '▼'} ${esc(t(d > 0 ? '{p} more than this time last month' : '{p} less than this time last month', { p: pct(Math.abs(d)) }))}</button>`;
 }
-/** The income of the month as a ring: spent, left to spend, kept aside. */
-function savingRing(st, sp) {
-  const spent = Math.min(st.expense, sp.income), keep = Math.max(0, Math.min(sp.goal, sp.income - spent)), left = Math.max(0, sp.income - spent - keep);
-  const parts = [[spent, 'Spent'], [left, 'Left to spend'], [keep, 'For saving']];
+/** The amount in the middle of a ring: always one line, smaller when it is long. */
+const ringAmt = (n, cls = '') => { const len = money(n).length; return `<b class="${cls} ${len > 10 ? 'xs' : len > 7 ? 'sm' : ''}">${M(n)}</b>`; };
+/** A ring graph. parts: [{ label, v, color, note }]. The legend beside it gives every figure in words. */
+function ringHtml(parts, mid, { pct: showPct = false, small = false } = {}) {
+  const total = parts.reduce((s, p) => s + p.v, 0), gap = parts.filter(p => p.v > 0).length > 1 ? 1 : 0;
   let at = 0;
-  const arcs = parts.map(([v, label], i) => {
-    const len = v / sp.income * 100, gap = parts.filter(p => p[0] > 0).length > 1 ? 1 : 0;
-    const arc = v > 0 ? `<circle class="seg-${i + 1}" cx="60" cy="60" r="50" pathLength="100" stroke-dasharray="${Math.max(len - gap, .5).toFixed(2)} 100" stroke-dashoffset="${(-at).toFixed(2)}" data-tip="${esc(`${t(label)}: ${money(v)}`)}"/>` : '';
+  const arcs = total > 0 ? parts.map(p => {
+    const len = p.v / total * 100;
+    const arc = p.v > 0 ? `<circle cx="60" cy="60" r="50" pathLength="100" style="stroke:${p.color}" stroke-dasharray="${Math.max(len - gap, .5).toFixed(2)} 100" stroke-dashoffset="${(-at).toFixed(2)}" data-tip="${esc(`${p.label}: ${money(p.v)}`)}"/>` : '';
     at += len;
     return arc;
-  }).join('');
+  }).join('') : '';
+  return `<div class="ring ${small ? 'sm' : ''}"><svg class="money" viewBox="0 0 120 120" role="img" aria-label="${esc(parts.map(p => `${p.label} ${money(p.v)}`).join(', '))}"><circle class="track" cx="60" cy="60" r="50"/>${arcs}</svg>
+      <div class="ring-mid">${mid}</div></div>
+    <div class="ring-legend">${parts.map(p => `<div><i style="background:${p.color}"></i><span>${esc(p.label)}</span><b>${M(p.v)}</b>${showPct && total > 0 ? `<small class="muted">${pct(p.v / total * 100)}</small>` : ''}${p.note || ''}</div>`).join('')}</div>`;
+}
+/** Colours follow the thing, not its rank: each keeps its slot unless another in the same ring already has it. */
+function ringColors(items, slotOf) {
+  const used = new Set();
+  return items.map(x => { let s = slotOf(x) % 6; while (used.has(s)) s = (s + 1) % 6; used.add(s); return `var(--cat-${s + 1})`; });
+}
+function foldTop(entries, makePart) {
+  const order = entries.filter(([, v]) => v > 0).sort((x, y) => y[1] - x[1]), top = order.slice(0, 5), rest = order.slice(5).reduce((s, [, v]) => s + v, 0);
+  return { top, rest, parts: makePart(top), restPart: rest > 0 ? { label: t('All the rest'), v: rest, color: 'var(--cat-rest)' } : null };
+}
+/** Spending by type of expense: the biggest five, then all the rest together. */
+function catRing(byCat, total, note) {
+  const ids = S.data.categories.map(c => c.id);
+  const { parts, restPart } = foldTop(Object.entries(byCat), top => { const colors = ringColors(top, ([id]) => Math.max(0, ids.indexOf(catInfo(id).id)));
+    return top.map(([id, v], i) => { const c = catInfo(id); return { label: `${c.icon} ${nm(c.name)}`, v, color: colors[i], note: note?.(id) || '' }; }); });
+  return ringHtml(restPart ? [...parts, restPart] : parts, `<span>${esc(t('Total'))}</span>${ringAmt(total)}`, { pct: true });
+}
+/** Income split into spent and saved. */
+function incomeRing(income, expense) {
+  const spent = Math.min(expense, income), saved = Math.max(0, income - expense);
+  const mid = expense > income ? `<span>${esc(t('Short by'))}</span>${ringAmt(expense - income)}` : `<span>${esc(t('Saved'))}</span><b class="money">${pct(saved / income * 100)}</b>`;
+  return ringHtml([{ label: t('Spent'), v: spent, color: 'var(--cat-2)' }, { label: t('Saved'), v: saved, color: 'var(--cat-3)' }], mid, { pct: true, small: true });
+}
+function loanRing(paid, bal) {
+  return ringHtml([{ label: t('Repaid'), v: paid, color: 'var(--cat-3)' }, { label: t('Balance to repay'), v: Math.max(0, bal), color: 'var(--cat-2)' }],
+    `<span>${esc(t('To repay'))}</span>${ringAmt(bal)}`, { pct: true, small: true });
+}
+function savingsRing() {
+  const keys = Object.keys(SAVE_TYPES), by = {};
+  for (const p of S.data.savings) by[p.type] = (by[p.type] || 0) + potBal(p);
+  const { parts, restPart } = foldTop(Object.entries(by), top => { const colors = ringColors(top, ([k]) => Math.max(0, keys.indexOf(k)));
+    return top.map(([k, v], i) => ({ label: `${saveType(k)[0]} ${t(saveType(k)[1])}`, v, color: colors[i] })); });
+  return ringHtml(restPart ? [...parts, restPart] : parts, `<span>${esc(t('Total saved'))}</span>${ringAmt(savingsTotal())}`, { pct: true, small: true });
+}
+/** The income of the month as a ring: spent, left to spend, for saving. */
+function savingRing(st, sp) {
+  const spent = Math.min(st.expense, sp.income), keep = Math.max(0, Math.min(sp.goal, sp.income - spent)), left = Math.max(0, sp.income - spent - keep);
   const dLeft = daysInMonth(mkey(todayKey())) - pkey(todayKey()).getDate() + 1;
-  return `<div class="ring"><svg class="money" viewBox="0 0 120 120" role="img" aria-label="${esc(parts.map(([v, l]) => `${t(l)} ${money(v)}`).join(', '))}"><circle class="track" cx="60" cy="60" r="50"/>${arcs}</svg>
-      <div class="ring-mid">${sp.left >= 0 ? `<span>${esc(t('You can spend today'))}</span><b class="saving-today">${M(sp.left / dLeft)}</b>` : `<span>${esc(t('Over by'))}</span><b>${M(-sp.left)}</b>`}</div></div>
-    <div class="ring-legend">${parts.map(([v, l], i) => `<div><i style="background:var(--ring-${i + 1})"></i><span>${esc(t(l))}</span><b>${M(v)}</b></div>`).join('')}</div>`;
+  return ringHtml([{ label: t('Spent'), v: spent, color: 'var(--ring-1)' }, { label: t('Left to spend'), v: left, color: 'var(--ring-2)' }, { label: t('For saving'), v: keep, color: 'var(--ring-3)' }],
+    sp.left >= 0 ? `<span>${esc(t('You can spend today'))}</span>${ringAmt(sp.left / dLeft, 'saving-today')}` : `<span>${esc(t('Over by'))}</span>${ringAmt(-sp.left)}`);
 }
 /** Spending in the last six months, this month last. */
 function sixMonthCard(mk) {
@@ -1472,6 +1545,7 @@ function viewHome() {
 
   ${homePlanCard(mk, st)}
   ${homeLoanCard()}
+  ${homeSavingsCard()}
 
   <div class="card">
     <h3>🔥 ${esc(t('Highest spends this month'))}</h3>
@@ -2011,14 +2085,15 @@ function barPath(x, y, w, h) { // rounded top only, flat on the baseline
 }
 /** groups: [{label, showLabel, values:[..], tip}] */
 function colChart(groups, label) {
-  const W = 400, H = 200, Lp = 46, R = 6, T = 10, B = 24, pw = W - Lp - R, ph = H - T - B;
   const max = niceMax(Math.max(1, ...groups.flatMap(g => g.values)));
+  const ticks = [0, 1, 2, 3, 4].map(i => money(max * i / 4));
+  const W = 400, H = 200, Lp = Math.max(46, 10 + Math.max(...ticks.map(x => x.length)) * 6.2), R = 6, T = 10, B = 24, pw = W - Lp - R, ph = H - T - B;
   const n = groups.length, gw = pw / n, ns = groups[0]?.values.length || 1;
   const bw = Math.max(2, Math.min(30, (gw * 0.72 - (ns - 1) * 2) / ns));
   let s = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(label)}">`;
   for (let i = 0; i <= 4; i++) {
     const y = T + ph - ph * i / 4;
-    s += `<line class="gridline" x1="${Lp}" x2="${W - R}" y1="${y}" y2="${y}"/><text x="${Lp - 6}" y="${y + 4}" text-anchor="end">${esc(compact(max * i / 4))}</text>`;
+    s += `<line class="gridline" x1="${Lp}" x2="${W - R}" y1="${y}" y2="${y}"/><text x="${Lp - 6}" y="${y + 4}" text-anchor="end">${esc(ticks[i])}</text>`;
   }
   groups.forEach((g, i) => {
     const gx = Lp + gw * i + (gw - (bw * ns + (ns - 1) * 2)) / 2;
@@ -2039,6 +2114,12 @@ const saveOrPrintCard = () => `<div class="card"><h3>${esc(t('Save or print'))}<
     </div>
     <p class="small muted" style="margin:10px 0 0">${th('Note: printed pages and exported Excel files are **not** password protected. Keep them safe or delete them after use.')}</p>
   </div>`;
+/** What is owed and what is saved, today. */
+function balanceRings() {
+  const paid = S.data.loans.reduce((s, l) => s + loanPaid(l), 0), bal = S.data.loans.reduce((s, l) => s + loanBal(l), 0);
+  return `${paid + bal > 0 ? `<div class="card" id="ringLoans"><h3>🏦 ${esc(t('Loans today'))}</h3>${loanRing(paid, bal)}</div>` : ''}
+  ${savingsTotal() > 0 ? `<div class="card" id="ringSavings"><h3>🐖 ${esc(t('Savings today'))}</h3>${savingsRing()}</div>` : ''}`;
+}
 function viewYearReport() {
   const tk = todayKey(), y = S.ui.repYear ||= +tk.slice(0, 4), thisYear = y === +tk.slice(0, 4);
   const st = monthStats(String(y)), saved = st.income - st.expense;
@@ -2047,7 +2128,7 @@ function viewYearReport() {
     tip: t('{m} – Income: {a}, Expenses: {b}, Saved: {c}', { m: fmtMonth(m), a: money(s.income), b: money(s.expense), c: money(s.income - s.expense) }) }); }
   const active = months.filter(x => x.s.expense > 0);
   const byExp = [...active].sort((a, b) => b.s.expense - a.s.expense);
-  const cats = Object.entries(st.byCat).sort((a, b) => b[1] - a[1]), maxCat = cats[0]?.[1] || 1;
+  const cats = Object.entries(st.byCat).sort((a, b) => b[1] - a[1]);
   const items = Object.values(st.byItem).sort((a, b) => b.amt - a.amt).slice(0, 10);
   const change = id => { const o = was.byCat[id] || 0; if (!o) return ''; const d = ((st.byCat[id] || 0) - o) / o * 100; if (Math.abs(d) < 1) return '';
     return `<span class="small ${d > 0 ? 'rise' : 'fall'}">${d > 0 ? '▲' : '▼'} ${pct(Math.abs(d))}</span>`; };
@@ -2071,13 +2152,12 @@ function viewYearReport() {
   <div class="cards-2">
   <div class="card" id="yearWhere"><h3>🔍 ${esc(t('Where we spend more'))}</h3>
     <p style="margin:0 0 12px">${th('Most money goes to **{c}**: {a}, which is {p} of all spending.', { c: esc(nm(catInfo(cats[0][0]).name)), a: M(cats[0][1]), p: pct(cats[0][1] / st.expense * 100) })}</p>
-    ${cats.map(([id, v]) => { const c = catInfo(id); return `
-      <div class="hbar" data-tip="${esc(`${nm(c.name)}: ${money(v)} (${pct(v / st.expense * 100)})`)}">
-        <div class="lab">${esc(c.icon)} ${esc(nm(c.name))}</div>
-        <div class="track money"><div class="fill" style="width:${v / maxCat * 100}%"></div></div>
-        <div class="val">${M(v)} <span class="muted small">${pct(v / st.expense * 100)}</span> ${change(id)}</div></div>`; }).join('')}
+    ${catRing(st.byCat, st.expense, change)}
     ${was.total > 0 ? `<p class="small muted" style="margin:10px 0 0">${esc(t(thisYear ? '▲▼ compared with the same dates last year' : '▲▼ compared with the year before'))}</p>` : ''}
   </div>
+
+  ${st.income > 0 ? `<div class="card" id="ringIncome"><h3>💰 ${esc(t('Income: spent and saved'))}</h3>${incomeRing(st.income, st.expense)}</div>` : ''}
+  ${balanceRings()}
 
   <div class="card" id="yearSave"><h3>💡 ${esc(t('Small changes, big savings'))}</h3>
     ${cats.slice(0, 3).map(([id, v]) => { const c = catInfo(id); return `<div class="list-row"><span class="emo" aria-hidden="true">${esc(c.icon)}</span>
@@ -2109,7 +2189,6 @@ function viewReports() {
   const mk = S.ui.month, st = monthStats(mk), dim = daysInMonth(mk);
   const tk = todayKey(), daysSoFar = mk === mkey(tk) ? pkey(tk).getDate() : mk < mkey(tk) ? dim : 0;
   const cats = Object.entries(st.byCat).sort((a, b) => b[1] - a[1]);
-  const maxCat = cats[0]?.[1] || 1;
   const items = Object.values(st.byItem).sort((a, b) => b.amt - a.amt);
   const topDays = Object.entries(st.byDay).sort((a, b) => b[1] - a[1]).slice(0, 5);
   const daily = [];
@@ -2134,14 +2213,12 @@ function viewReports() {
   </div>
 
   <div class="cards-2">
-  <div class="card"><h3>${esc(t('Where the money went'))}</h3>
-    ${cats.length ? cats.map(([id, v]) => { const c = catInfo(id); return `
-      <div class="hbar" data-tip="${esc(`${nm(c.name)}: ${money(v)} (${pct(v / st.expense * 100)})`)}">
-        <div class="lab">${esc(c.icon)} ${esc(nm(c.name))}</div>
-        <div class="track money"><div class="fill" style="width:${v / maxCat * 100}%"></div></div>
-        <div class="val">${M(v)} <span class="muted small">${pct(v / st.expense * 100)}</span></div></div>`; }).join('')
-      : `<div class="empty">${esc(t('No expenses recorded in this month.'))}</div>`}
+  <div class="card" id="ringWhere"><h3>🍩 ${esc(t('Where the money went'))}</h3>
+    ${cats.length ? catRing(st.byCat, st.expense) : `<div class="empty">${esc(t('No expenses recorded in this month.'))}</div>`}
   </div>
+  ${st.income > 0 ? `<div class="card" id="ringIncome"><h3>💰 ${esc(t('Income: spent and saved'))}</h3>${incomeRing(st.income, st.expense)}</div>` : ''}
+  ${S.data.settings.monthlyBudget > 0 ? `<div class="card" id="ringBudget"><h3>🎯 ${esc(t('Monthly budget'))}</h3>${ringHtml([{ label: t('Spent'), v: Math.min(st.expense, S.data.settings.monthlyBudget), color: 'var(--cat-2)' }, { label: t('Left'), v: Math.max(0, S.data.settings.monthlyBudget - st.expense), color: 'var(--cat-1)' }],
+      `<span>${esc(t('Used'))}</span><b class="money">${pct(st.expense / S.data.settings.monthlyBudget * 100)}</b>`, { small: true })}</div>` : ''}
 
   <div class="card"><h3>${esc(t('Spending each day'))}</h3>
     ${st.expense ? colChart(daily, t('Daily spending in {m}', { m: fmtMonth(mk) })) +
@@ -2154,10 +2231,12 @@ function viewReports() {
 
   ${shared() ? byPersonCard(mk, st) : ''}
 
+  ${balanceRings()}
+
   <div class="card"><h3>${esc(t('Items bought'))}</h3>
-    ${items.length ? `<div class="tbl-wrap"><table class="tbl"><tr><th>${esc(t('Item'))}</th><th class="r">${esc(t('Qty'))}</th><th class="r">${esc(t('Amount'))}</th></tr>
+    ${items.length ? `<details class="tv"><summary>${esc(t('Show as a table'))}</summary><div class="tbl-wrap"><table class="tbl"><tr><th>${esc(t('Item'))}</th><th class="r">${esc(t('Qty'))}</th><th class="r">${esc(t('Amount'))}</th></tr>
       ${items.map(it => `<tr><td>${esc(it.icon || '')} ${esc(nm(it.name))}</td><td class="r num">${esc(qtyMapLabel(it.qty))}</td><td class="r">${M(it.amt)}</td></tr>`).join('')}
-      <tr><th>${esc(t('Total'))}</th><th></th><th class="r">${M(st.expense)}</th></tr></table></div>`
+      <tr><th>${esc(t('Total'))}</th><th></th><th class="r">${M(st.expense)}</th></tr></table></div></details>`
       : `<div class="empty">${esc(t('No items bought in this month.'))}</div>`}
   </div>
 
@@ -2221,7 +2300,7 @@ function viewSettings() {
 
   <div class="card"><h3>🎯 ${esc(t('Budgets (spending limits)'))}</h3>
     ${canManage() ? '' : `<p class="small muted">🔒 ${esc(t('Only the owner or an editor can change the shared budgets and currency.'))}</p>`}
-    <label class="field"><span>${esc(t('Monthly budget for the whole home'))}</span><input class="input" data-set="monthlyBudget" inputmode="decimal" value="${s.monthlyBudget || ''}" placeholder="${esc(t('e.g. 20000 (leave empty for none)'))}" ${canManage() ? '' : 'disabled'}></label>
+    <label class="field"><span>${esc(t('Monthly budget for the whole home'))}</span><input class="input" data-set="monthlyBudget" inputmode="decimal" value="${s.monthlyBudget || ''}" placeholder="${esc(t('e.g. {a} (leave empty for none)', { a: money(20000) }))}" ${canManage() ? '' : 'disabled'}></label>
     <label class="field"><span>${esc(t('How much of my income to save'))}</span><select class="input" data-set="savingsPct" ${canManage() ? '' : 'disabled'}>${[0, 5, 10, 15, 20, 25, 30, 40, 50].map(v => `<option value="${v}" ${(s.savingsPct || 0) === v ? 'selected' : ''}>${v ? esc(pct(v)) : esc(t('No goal'))}</option>`).join('')}</select></label>
     <p class="small muted">${esc(t('You can also set a limit for each type of expense. You will be warned at 80% and when it is crossed.'))}</p>
     ${S.data.categories.map(c => `
@@ -2957,7 +3036,7 @@ function voiceModal() {
             }
             e.qUnit = u;
           }
-          if (e.unitPrice != null && e.qty > 0) { e.amount = round2(e.qty * conv(e.qUnit, e.base) * e.unitPrice); row.querySelector('[data-v=amt]').value = e.amount; }
+          if (e.unitPrice != null && e.qty > 0) { e.amount = round2(e.qty * conv(e.qUnit, e.base) * e.unitPrice); row.querySelector('[data-v=amt]').value = fmtAmt(e.amount); }
         }
         row.classList.toggle('need', need(e));
         row.querySelector('.v-need').textContent = need(e) ? t('Please type the amount') : '';
@@ -3306,22 +3385,23 @@ function homeLoanCard() {
     <button class="btn sm" data-act="nav" data-to="loans">🏦 ${esc(t('Open loans'))}</button></div>`;
 }
 
+const listTabs = (key, sel) => `<div class="row wrap" style="margin-bottom:12px">${[['one', 'One by one'], ['type', 'By type']].map(([v, l]) => `<button class="chip" data-act="listView" data-key="${key}" data-v="${v}" aria-pressed="${sel === v}">${esc(t(l))}</button>`).join('')}</div>`;
+/** A row that opens: its summary is one line, its details are inside. */
+const openRow = (id, attrs, cls, head, body) => `<details class="m-item ${cls}" data-row="${esc(id)}" ${attrs} ${S.ui.openRow === id ? 'open' : ''}><summary class="m-row">${head}<span class="chev" aria-hidden="true">›</span></summary><div class="m-body">${body}</div></details>`;
 function loanCard(l) {
   const paid = loanPaid(l), bal = loanBal(l), [ico, typeName] = loanType(l.type), pays = loanPays(l);
   const can = canEditBy(l.by), done = bal <= 0, pc = l.amount > 0 ? Math.min(100, paid / l.amount * 100) : 0;
-  return `<div class="card loan-card ${done ? 'closed' : ''}" data-loan="${esc(l.id)}">
-    <div class="row" style="align-items:flex-start">
-      <span class="emo" aria-hidden="true" style="font-size:1.7rem">${ico}</span>
-      <div style="flex:1;min-width:0"><div class="t loan-name">${esc(l.name)}</div>
-        <div class="small muted">${esc(t(typeName))} · ${esc(t('Taken on {d}', { d: fmtLoanDate(l.date) }))}${shared() && l.by && l.by !== myId() ? ` · 👤 ${esc(memberName(l.by))}` : ''}</div></div>
-      ${done ? `<span class="due paid">✅ ${esc(t('Fully repaid'))}</span>` : ''}
-    </div>
+  return openRow(l.id, `data-loan="${esc(l.id)}"`, `loan-card ${done ? 'closed' : ''}`, `
+      <span class="emo" aria-hidden="true">${ico}</span>
+      <div class="main"><div class="t loan-name">${esc(l.name)}</div>
+        <div class="small muted">${esc(t(typeName))} · ${esc(t('Taken on {d}', { d: fmtLoanDate(l.date) }))}${shared() && l.by && l.by !== myId() ? ` · 👤 ${esc(memberName(l.by))}` : ''}</div>
+        <div class="progress thin" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(pc)}"><div style="width:${pc}%"></div></div></div>
+      <div class="m-amt">${done ? `<span class="due paid">✅ ${esc(t('Fully repaid'))}</span>` : `<b>${M(bal)}</b><small class="muted">${th('of {a}', { a: M(l.amount) })}</small>`}</div>`, `
     <div class="loan-figs">
       <div><span class="small muted">${esc(t('Loan amount'))}</span><b>${M(l.amount)}</b></div>
       <div><span class="small muted">${esc(t('Repaid'))}</span><b class="good-txt">${M(paid)}</b></div>
       <div><span class="small muted">${esc(t('Balance to repay'))}</span><b class="${done ? 'good-txt' : 'bad-txt'}" data-bal>${M(bal)}</b></div>
     </div>
-    <div class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(pc)}"><div style="width:${pc}%"></div></div>
     ${l.note ? `<p class="small" style="margin:8px 0 0">🗒️ ${esc(l.note)}</p>` : ''}
     ${can ? `<div class="grid-2" style="margin-top:10px">
       ${done ? '' : `<button class="btn primary" data-act="loanPay" data-id="${esc(l.id)}">💸 ${esc(t('Add repayment'))}</button>`}
@@ -3329,8 +3409,7 @@ function loanCard(l) {
     ${pays.length ? `<details class="tv"><summary>${esc(t('Repayments'))} (${pays.length})</summary>
       ${pays.map(p => `<button class="list-row" data-act="payEdit" data-id="${esc(l.id)}" data-pay="${esc(p.id)}" ${rowBtn}>
         <div class="main"><div class="t">${esc(fmtLoanDate(p.date))}</div>${p.note ? `<div class="small muted">${esc(p.note)}</div>` : ''}</div>
-        <div class="amt">${M(p.amount)}</div><span aria-hidden="true">✎</span></button>`).join('')}</details>` : ''}
-  </div>`;
+        <div class="amt">${M(p.amount)}</div><span aria-hidden="true">✎</span></button>`).join('')}</details>` : ''}`);
 }
 const fmtLoanDate = k => pkey(k).toLocaleDateString(DLOC(), { day: 'numeric', month: 'short', year: 'numeric' });
 
@@ -3339,6 +3418,7 @@ function viewLoans() {
   const paid = round2(all.reduce((s, l) => s + loanPaid(l), 0));
   const byDate = (a, b) => b.date.localeCompare(a.date);
   const open = all.filter(l => loanBal(l) > 0).sort(byDate), closed = all.filter(l => loanBal(l) <= 0).sort(byDate);
+  const mode = readPrefs().loanView || 'one';
   return `
   <div class="hero"><div class="k">${esc(t('Balance to repay'))}</div><div class="v">${M(total - paid)}</div>
     <button class="btn" data-act="loanAdd">➕ ${esc(t('Add a loan'))}</button></div>
@@ -3347,8 +3427,13 @@ function viewLoans() {
     <div class="stat"><div class="k">✅ ${esc(t('Total repaid'))}</div><div class="v good">${M(paid)}</div></div>
   </div>
   ${all.length ? '' : `<div class="card"><div class="empty">${esc(t('No loans added yet. Add loans from people, banks or jewel loans to keep track of what is left to repay.'))}</div></div>`}
-  <div class="cards-2">${open.map(loanCard).join('')}</div>
-  ${closed.length ? `<h3>${esc(t('Fully repaid'))}</h3><div class="cards-2">${closed.map(loanCard).join('')}</div>` : ''}`;
+  ${all.length ? `<div class="card" id="loanRing"><h3>🍩 ${esc(t('Repaid and left to repay'))}</h3>${loanRing(paid, total - paid)}</div>${listTabs('loanView', mode)}` : ''}
+  ${mode === 'type'
+    ? Object.entries(LOAN_TYPES).map(([k, [ico, name]]) => { const group = [...open, ...closed].filter(l => (LOAN_TYPES[l.type] ? l.type : 'other') === k); if (!group.length) return '';
+        return `<div class="card m-group" data-group="${k}"><div class="group-head"><span class="emo" aria-hidden="true">${ico}</span><div class="main"><div class="t">${esc(t(name))}</div><div class="small muted">${esc(plural(group.length, '{n} loan', '{n} loans'))}</div></div>
+          <div class="m-amt"><b>${M(group.reduce((s, l) => s + Math.max(0, loanBal(l)), 0))}</b><small class="muted">${esc(t('to repay'))}</small></div></div>${group.map(loanCard).join('')}</div>`; }).join('')
+    : `${open.length ? `<div class="card m-group">${open.map(loanCard).join('')}</div>` : ''}
+       ${closed.length ? `<h3>${esc(t('Fully repaid'))}</h3><div class="card m-group">${closed.map(loanCard).join('')}</div>` : ''}`}`;
 }
 
 function loanModal(l) {
@@ -3408,7 +3493,7 @@ function payModal(l, payId) {
         <button class="btn primary">${esc(t('Save'))}</button></div>
     </form>`, (box, close) => {
     const f = $('#mf', box);
-    $('#payAll', box).onclick = () => { f.amount.value = room; };
+    $('#payAll', box).onclick = () => { f.amount.value = fmtAmt(room); };
     $('[data-del]', box)?.addEventListener('click', async () => {
       close();
       if (await confirmBox(t('Delete this repayment of {a}? The balance goes back up, and it is removed from the daily ledger too.', { a: money(p.amount) }), t('Delete'), true)) {
@@ -3430,6 +3515,153 @@ function payModal(l, payId) {
       persist(); close(); render(); scheduleAlertCheck();
       const bal = loanBal(l);
       toast(bal > 0 ? t('✅ Repayment saved') : t('🎉 Loan fully repaid!'), t('Balance to repay: {a}', { a: money(bal) }));
+    };
+  });
+}
+
+/* ---------------------------------------------------------------------
+   SAVINGS – where the family's money is kept: bank, deposits, gold, chits.
+   Each saving has its own history of money added and taken out, and may have a target.
+   This is separate from spending, so it does not change the daily ledger.
+   --------------------------------------------------------------------- */
+const SAVE_TYPES = { bank: ['🏦', 'Bank account'], fd: ['📜', 'Fixed deposit'], gold: ['🪙', 'Gold & jewels'], chit: ['🤝', 'Chit fund'], post: ['📮', 'Post office'], cash: ['💵', 'Cash at home'], fund: ['📈', 'Mutual funds'], other: ['🐖', 'Other savings'] };
+const saveType = k => SAVE_TYPES[k] || SAVE_TYPES.other;
+const potById = id => S.data.savings.find(p => p.id === id);
+const potEntries = p => Object.entries(p.entries || {}).map(([id, e]) => ({ id, ...e })).sort((x, y) => y.date.localeCompare(x.date));
+const potSum = (p, kind) => round2(Object.values(p.entries || {}).reduce((s, e) => s + (e.kind === kind ? +e.amount || 0 : 0), 0));
+const potBal = p => round2(potSum(p, 'in') - potSum(p, 'out'));
+const savingsTotal = () => round2(S.data.savings.reduce((s, p) => s + potBal(p), 0));
+/** Money added less money taken out, for dates starting with this month or year. */
+const savedIn = prefix => round2(S.data.savings.reduce((s, p) => s + Object.values(p.entries || {}).reduce((x, e) => x + (e.date.startsWith(prefix) ? (e.kind === 'in' ? +e.amount : -e.amount) : 0), 0), 0));
+
+function homeSavingsCard() {
+  const n = S.data.savings.length;
+  return `<div class="card"><h3>🐖 ${esc(t('Savings'))}</h3>
+    ${n ? `<p style="margin:0 0 10px">${th('Total saved: **{a}**', { a: M(savingsTotal()) })}</p>` : `<p class="muted" style="margin:0 0 10px">${esc(t('Keep track of your bank savings, deposits, gold and chit funds.'))}</p>`}
+    <button class="btn sm" data-act="nav" data-to="savings">🐖 ${esc(t('Open savings'))}</button></div>`;
+}
+function potCard(p) {
+  const [ico, typeName] = saveType(p.type), bal = potBal(p), can = canEditBy(p.by), items = potEntries(p);
+  const pc = p.target > 0 ? Math.min(100, Math.max(0, bal / p.target * 100)) : 0;
+  return openRow(p.id, `data-pot="${esc(p.id)}"`, 'pot-card', `
+      <span class="emo" aria-hidden="true">${ico}</span>
+      <div class="main"><div class="t loan-name">${esc(p.name)}</div>
+        <div class="small muted">${esc(t(typeName))}${shared() && p.by && p.by !== myId() ? ` · 👤 ${esc(memberName(p.by))}` : ''}</div>
+        ${p.target > 0 ? `<div class="progress thin" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(pc)}"><div style="width:${pc}%"></div></div>` : ''}</div>
+      <div class="m-amt"><b data-potbal>${M(bal)}</b>${p.target > 0 ? `<small class="muted">${th('of {a}', { a: M(p.target) })}</small>` : ''}</div>`, `
+    <div class="loan-figs">
+      <div><span class="small muted">${esc(t('Added'))}</span><b class="good-txt">${M(potSum(p, 'in'))}</b></div>
+      <div><span class="small muted">${esc(t('Taken out'))}</span><b>${M(potSum(p, 'out'))}</b></div>
+      <div><span class="small muted">${esc(t('Balance'))}</span><b>${M(bal)}</b></div>
+    </div>
+    ${p.note ? `<p class="small" style="margin:8px 0 0">🗒️ ${esc(p.note)}</p>` : ''}
+    ${can ? `<div class="grid-2" style="margin-top:10px">
+      <button class="btn primary" data-act="potIn" data-id="${esc(p.id)}">➕ ${esc(t('Add money'))}</button>
+      <button class="btn" data-act="potOut" data-id="${esc(p.id)}">➖ ${esc(t('Take out'))}</button></div>
+      <button class="btn block" data-act="potEdit" data-id="${esc(p.id)}" style="margin-top:10px">✎ ${esc(t('Edit saving'))}</button>` : ''}
+    ${items.length ? `<details class="tv"><summary>${esc(t('History'))} (${items.length})</summary>
+      ${items.map(e => `<button class="list-row" data-act="potEntry" data-id="${esc(p.id)}" data-entry="${esc(e.id)}" ${rowBtn}>
+        <div class="main"><div class="t">${esc(fmtLoanDate(e.date))}</div><div class="small muted">${esc(t(e.kind === 'in' ? 'Added' : 'Taken out'))}${e.note ? ' · ' + esc(e.note) : ''}</div></div>
+        <div class="amt ${e.kind === 'in' ? 'good-txt' : ''}">${e.kind === 'in' ? '+' : '−'} ${M(e.amount)}</div><span aria-hidden="true">✎</span></button>`).join('')}</details>` : ''}`);
+}
+function viewSavings() {
+  const all = S.data.savings, tk = todayKey(), mk = mkey(tk), mode = readPrefs().saveView || 'one';
+  const total = savingsTotal(), month = savedIn(mk), st = monthStats(mk), sp = savingPlan(mk, st), left = round2(st.income - st.expense);
+  return `
+  <div class="hero"><div class="k">${esc(t('Total saved'))}</div><div class="v">${M(total)}</div>
+    <button class="btn" data-act="potAdd">➕ ${esc(t('Add a saving'))}</button></div>
+  <div class="grid-2 stats" style="margin-bottom:14px">
+    <div class="stat"><div class="k">📥 ${esc(t('Saved this month'))}</div><div class="v ${month >= 0 ? 'good' : 'bad'}">${M(month)}</div></div>
+    <div class="stat"><div class="k">📅 ${esc(t('Saved this year'))}</div><div class="v">${M(savedIn(mk.slice(0, 4)))}</div></div>
+  </div>
+  ${sp.pc > 0 && sp.goal > 0 ? `<div class="card" id="saveGoal"><h3>🎯 ${esc(t("This month's goal"))}</h3>
+    <div class="row wrap" style="margin-bottom:8px"><span>${th('{a} of {b}', { a: M(Math.max(0, month)), b: M(sp.goal) })}</span><span class="spacer"></span>
+    <b>${month >= sp.goal ? '✅ ' + esc(t('Goal reached')) : th('{a} to go', { a: M(sp.goal - Math.max(0, month)) })}</b></div>
+    <div class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(Math.min(1, Math.max(0, month) / sp.goal) * 100)}"><div style="width:${Math.min(100, Math.max(0, month) / sp.goal * 100)}%"></div></div>
+    ${st.income > 0 ? `<p class="small muted" style="margin:10px 0 0">${esc(left >= 0 ? t('{a} of this month\'s income is not spent yet.', { a: money(left) }) : t('You have spent {a} more than this month\'s income.', { a: money(-left) }))}</p>` : ''}</div>` : ''}
+  ${all.length ? '' : `<div class="card"><div class="empty">${esc(t('No savings added yet. Add your bank savings, deposits, gold or chit funds to see all your savings in one place.'))}</div></div>`}
+  ${total > 0 ? `<div class="card" id="saveRing"><h3>🍩 ${esc(t('Where your savings are'))}</h3>${savingsRing()}</div>` : ''}
+  ${all.length ? listTabs('saveView', mode) : ''}
+  ${mode === 'type'
+    ? Object.entries(SAVE_TYPES).map(([k, [ico, name]]) => { const group = all.filter(p => (SAVE_TYPES[p.type] ? p.type : 'other') === k); if (!group.length) return '';
+        return `<div class="card m-group" data-group="${k}"><div class="group-head"><span class="emo" aria-hidden="true">${ico}</span><div class="main"><div class="t">${esc(t(name))}</div></div>
+          <div class="m-amt"><b>${M(group.reduce((s, p) => s + potBal(p), 0))}</b></div></div>${group.map(potCard).join('')}</div>`; }).join('')
+    : all.length ? `<div class="card m-group">${[...all].sort((x, y) => potBal(y) - potBal(x)).map(potCard).join('')}</div>` : ''}`;
+}
+function potModal(p) {
+  if (p && !canEditBy(p.by)) return notAllowed(p.by);
+  const isNew = !p, now = p || { type: 'bank', name: '', target: '', note: '' };
+  modal(`<h3>${isNew ? '➕ ' + esc(t('Add a saving')) : '✎ ' + esc(t('Edit saving'))}</h3>
+    <form id="mf">
+      <label class="field"><span>${esc(t('Type of saving'))}</span><select class="input" name="type">${Object.entries(SAVE_TYPES).map(([k, [i, n]]) => `<option value="${k}" ${k === now.type ? 'selected' : ''}>${i} ${esc(t(n))}</option>`).join('')}</select></label>
+      <label class="field"><span>${esc(t('Name'))}</span><input class="input" name="name" maxlength="60" value="${esc(now.name)}" placeholder="${esc(t('e.g. Daughter\'s education'))}"></label>
+      ${isNew ? `<label class="field"><span>${esc(t('Amount saved so far'))}</span><input class="input" name="start" inputmode="decimal" placeholder="0"></label>
+      <label class="field"><span>${esc(t('Date'))}</span><input class="input" type="date" name="date" value="${todayKey()}"></label>` : ''}
+      <label class="field"><span>${esc(t('Target amount (optional)'))}</span><input class="input" name="target" inputmode="decimal" value="${now.target || ''}" placeholder="0"></label>
+      <label class="field"><span>${esc(t('Note (optional)'))}</span><input class="input" name="note" maxlength="120" value="${esc(now.note)}"></label>
+      <div class="error-msg" id="merr"></div>
+      <div class="actions">
+        ${isNew ? `<button type="button" class="btn" data-close>${esc(t('Cancel'))}</button>` : `<button type="button" class="btn danger" data-del>🗑 ${esc(t('Delete'))}</button>`}
+        <button class="btn primary">${esc(t('Save'))}</button></div>
+    </form>`, (box, close) => {
+    const f = $('#mf', box);
+    $('[data-del]', box)?.addEventListener('click', async () => {
+      close();
+      if (await confirmBox(t('Delete {n} and its history? This does not touch the money itself, only this record.', { n: p.name }), t('Delete'), true)) {
+        S.data.savings = S.data.savings.filter(x => x.id !== p.id); persist(); render();
+        toast(t('✅ Deleted'), p.name);
+      }
+    });
+    f.onsubmit = ev => {
+      ev.preventDefault();
+      const name = f.name.value.trim(), target = f.target.value.trim() ? num(f.target.value) : 0, start = isNew && f.start.value.trim() ? num(f.start.value) : 0;
+      if (!name) { $('#merr', box).textContent = t('Please give it a name.'); return; }
+      if (!(target >= 0) || !(start >= 0)) { $('#merr', box).textContent = t('Please enter a valid amount'); return; }
+      if (start > 0 && !f.date.value) { $('#merr', box).textContent = t('Please choose a date.'); return; }
+      const rec = { type: f.type.value, name, target: round2(target), note: f.note.value.trim() };
+      if (isNew) {
+        const entries = start > 0 ? { [uid()]: { kind: 'in', amount: round2(start), date: f.date.value, note: '', by: myId() } } : {};
+        S.data.savings.push({ id: uid(), ...rec, entries, by: myId() });
+      } else Object.assign(p, rec);
+      persist(); close(); render();
+      toast(t('✅ Saved'), name);
+    };
+  });
+}
+function entryModal(p, kind, entryId) {
+  const e = entryId ? p.entries[entryId] : null;
+  if (!canEditBy(e ? e.by || p.by : p.by)) return notAllowed(p.by);
+  const others = round2(potBal(p) - (e ? (e.kind === 'in' ? +e.amount : -e.amount) : 0)); // the balance without this entry
+  modal(`<h3>${kind === 'in' ? '➕ ' + esc(t('Add money')) : '➖ ' + esc(t('Take out'))}</h3>
+    <p class="small muted" style="margin-top:-6px">${esc(p.name)} · ${th('Balance: **{a}**', { a: M(potBal(p)) })}</p>
+    <form id="mf">
+      <label class="field"><span>${esc(t('Amount'))}</span><input class="input" name="amount" inputmode="decimal" value="${e ? esc(e.amount) : ''}" placeholder="0"></label>
+      <label class="field"><span>${esc(t('Date'))}</span><input class="input" type="date" name="date" value="${esc(e ? e.date : todayKey())}"></label>
+      <label class="field"><span>${esc(t('Note (optional)'))}</span><input class="input" name="note" maxlength="80" value="${esc(e?.note || '')}"></label>
+      <div class="error-msg" id="merr"></div>
+      <div class="actions">
+        ${e ? `<button type="button" class="btn danger" data-del>🗑 ${esc(t('Delete'))}</button>` : `<button type="button" class="btn" data-close>${esc(t('Cancel'))}</button>`}
+        <button class="btn primary">${esc(t('Save'))}</button></div>
+    </form>`, (box, close) => {
+    const f = $('#mf', box);
+    $('[data-del]', box)?.addEventListener('click', async () => {
+      if (others < 0) { $('#merr', box).textContent = t('Money already taken out needs this entry. Please change that first.'); return; }
+      close();
+      if (await confirmBox(t('Delete this entry of {a}?', { a: money(e.amount) }), t('Delete'), true)) {
+        delete p.entries[entryId]; persist(); render();
+        toast(t('✅ Deleted'), money(e.amount));
+      }
+    });
+    f.onsubmit = ev => {
+      ev.preventDefault();
+      const amount = num(f.amount.value), date = f.date.value;
+      if (!(amount > 0)) { $('#merr', box).textContent = t('Please enter the amount.'); return; }
+      if (!date) { $('#merr', box).textContent = t('Please choose a date.'); return; }
+      if (kind === 'out' && amount > others) { $('#merr', box).textContent = t('That is more than the balance of {a}.', { a: money(Math.max(0, others)) }); return; }
+      if (kind === 'in' && others + amount < 0) { $('#merr', box).textContent = t('Money already taken out needs this entry. Please change that first.'); return; }
+      Object.assign(e || (p.entries[uid()] = { kind, by: myId() }), { kind, amount: round2(amount), date, note: f.note.value.trim() });
+      persist(); close(); render();
+      toast(t('✅ Saved'), t('Balance: {a}', { a: money(potBal(p)) }));
     };
   });
 }
@@ -3498,6 +3730,11 @@ function recordsOf(d) {
     for (const [id, p] of Object.entries(l.payments || {}))
       m.set(`H|${l.id}|${id}`, { amount: p.amount, date: p.date, note: p.note || '', ldate: p.ldate || '', lkey: p.lkey || '' });
   }
+  for (const p of d.savings || []) {
+    m.set(`V|${p.id}`, { type: p.type, name: p.name, target: p.target || 0, note: p.note || '' });
+    for (const [id, e] of Object.entries(p.entries || {}))
+      m.set(`W|${p.id}|${id}`, { kind: e.kind, amount: e.amount, date: e.date, note: e.note || '' });
+  }
   return m;
 }
 /** Puts one record received from the family into this device's data. */
@@ -3540,6 +3777,17 @@ function applyRecord(id, author, deleted, v) {
     if (!loan) return; // its loan was deleted
     if (deleted) delete loan.payments[p[2]];
     else loan.payments[p[2]] = { amount: v.amount, date: v.date, note: v.note || '', ldate: v.ldate || '', lkey: v.lkey || '', by: author };
+  } else if (kind === 'V') {
+    d.savings ||= [];
+    const i = d.savings.findIndex(x => x.id === p[1]);
+    if (deleted) { if (i >= 0) d.savings.splice(i, 1); return; }
+    const rec = { id: p[1], type: v.type, name: v.name, target: v.target || 0, note: v.note || '', entries: d.savings[i]?.entries || {}, by: author };
+    if (i >= 0) d.savings[i] = rec; else d.savings.push(rec);
+  } else if (kind === 'W') {
+    const pot = (d.savings || []).find(x => x.id === p[1]);
+    if (!pot) return; // its saving was deleted
+    if (deleted) delete pot.entries[p[2]];
+    else pot.entries[p[2]] = { kind: v.kind, amount: v.amount, date: v.date, note: v.note || '', by: author };
   } else if (kind === 'P' || kind === 'Q') {
     const mk = p[1], plan = (d.plans[mk] ||= { income: 0, cats: {}, note: '', items: {} });
     plan.items ||= {};
@@ -4037,8 +4285,9 @@ let pendingInvite = null;
 /* ---------------------------------------------------------------------
    Views & actions registry
    --------------------------------------------------------------------- */
-const VIEWS = { home: viewHome, ledger: viewLedger, planner: viewPlanner, loans: viewLoans, income: viewIncome, reports: viewReports, settings: viewSettings };
+const VIEWS = { home: viewHome, ledger: viewLedger, planner: viewPlanner, loans: viewLoans, savings: viewSavings, income: viewIncome, reports: viewReports, settings: viewSettings };
 AFTER.planner = v => wirePlanner(v);
+AFTER.loans = AFTER.savings = v => { $$('details.m-item', v).forEach(d => { d.ontoggle = () => { if (d.open) S.ui.openRow = d.dataset.row; else if (S.ui.openRow === d.dataset.row) S.ui.openRow = null; }; }); };
 const ACTIONS = {
   nav: el => go(el.dataset.to),
   openDay: el => { S.ui.date = el.dataset.date; S.ui.filter = 'all'; S.ui.q = ''; go('ledger'); },
@@ -4096,6 +4345,12 @@ const ACTIONS = {
   planCatEdit: el => planCatModal(S.ui.planMonth, el.dataset.id),
   planCatDel: el => planCatDelete(S.ui.planMonth, el.dataset.id),
   planCatClear: () => planCatClear(S.ui.planMonth),
+  listView: el => { writePrefs({ [el.dataset.key]: el.dataset.v }); render(); },
+  potAdd: () => potModal(null),
+  potEdit: el => potModal(potById(el.dataset.id)),
+  potIn: el => entryModal(potById(el.dataset.id), 'in'),
+  potOut: el => entryModal(potById(el.dataset.id), 'out'),
+  potEntry: el => { const p = potById(el.dataset.id); entryModal(p, p.entries[el.dataset.entry].kind, el.dataset.entry); },
   loanAdd: () => loanModal(null),
   loanEdit: el => loanModal(loanById(el.dataset.id)),
   loanPay: el => payModal(loanById(el.dataset.id)),
